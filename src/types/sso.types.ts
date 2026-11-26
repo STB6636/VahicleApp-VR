@@ -26,12 +26,20 @@ export interface PortalPersonnelSummary {
   phone_number?: string | null;
 }
 
+export interface PortalAdminScope {
+  scope_level_no: 2 | 3;
+  org_unit_id: string;
+}
+
 export interface PortalSsoUser {
   id: string;
-  username: string;
-  email: string | null;
+  username?: string;
+  email?: string | null;
   role: PortalCoreRole;
+  status?: string;
   personnel_id?: string | null;
+  must_change_credential?: boolean;
+  admin_scope?: PortalAdminScope | null;
 }
 
 export interface PortalSsoExchangeResponse {

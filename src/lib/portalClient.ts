@@ -33,3 +33,25 @@ export function extractSsoTokenFromLocation(search: string, hash: string): strin
 
   return '';
 }
+
+/**
+ * Removes `sso_token` from both URL search params and HashRouter hash query string
+ * while preserving unrelated query parameters and hash paths.
+ */
+export function stripSsoTokenFromUrl(href: string): string {
+  const url = new URL(href, 'http://localhost');
+  url.searchParams.delete('sso_token');
+
+  let cleanHash = url.hash || '';
+  if (cleanHash.includes('?')) {
+    const qIdx = cleanHash.indexOf('?');
+    const hashPath = cleanHash.slice(0, qIdx);
+    const hashParams = new URLSearchParams(cleanHash.slice(qIdx + 1));
+    hashParams.delete('sso_token');
+    const remaining = hashParams.toString();
+    cleanHash = remaining ? `${hashPath}?${remaining}` : hashPath;
+  }
+
+  const remainingSearch = url.searchParams.toString();
+  return `${url.pathname}${remainingSearch ? `?${remainingSearch}` : ''}${cleanHash}`;
+}

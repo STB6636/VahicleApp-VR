@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { extractSsoTokenFromLocation } from '@/lib/portalClient';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { extractSsoTokenFromLocation, stripSsoTokenFromUrl } from '@/lib/portalClient';
 import {
   PORTAL_HANDSHAKE_SESSION_KEY,
   hasPortalHandshakeFlag,
@@ -9,6 +9,8 @@ import {
   isVehicleSuperAdmin,
 } from '@/stores/useAuthStore';
 import { verifyExistingPortalSession } from '@/services/ssoAuthService';
+import fs from 'node:fs';
+import path from 'node:path';
 
 describe('Portal-Only Entry Security (Requirement 8)', () => {
   beforeEach(() => {
@@ -22,6 +24,7 @@ describe('Portal-Only Entry Security (Requirement 8)', () => {
       blockReason: null,
       blockMessage: null,
     });
+    vi.restoreAllMocks();
   });
 
   it('extracts sso_token from both BrowserRouter search and HashRouter hash URLs', () => {
@@ -29,6 +32,45 @@ describe('Portal-Only Entry Security (Requirement 8)', () => {
     expect(extractSsoTokenFromLocation('', '#/sso-callback?sso_token=xyz789&foo=1')).toBe('xyz789');
     expect(extractSsoTokenFromLocation('', '#/dashboard')).toBe('');
     expect(extractSsoTokenFromLocation('?sso_token=%20%20', '')).toBe('');
+  });
+
+  it('strips sso_token from both search and hash queries while preserving unrelated params', () => {
+    expect(stripSsoTokenFromUrl('https://app.example.com/sso-callback?sso_token=secret&tab=1')).toBe(
+      '/sso-callback?tab=1'
+    );
+    expect(
+      stripSsoTokenFromUrl('https://stb6636.github.io/VahicleApp-VR/?sso_token=secret#/sso-callback?sso_token=secret')
+    ).toBe('/VahicleApp-VR/#/sso-callback');
+    expect(
+      stripSsoTokenFromUrl('https://stb6636.github.io/VahicleApp-VR/#/sso-callback?sso_token=secret&mode=test')
+    ).toBe('/VahicleApp-VR/#/sso-callback?mode=test');
+    expect(stripSsoTokenFromUrl('https://app.example.com/dashboard')).toBe('/dashboard');
+  });
+
+  it('GitHub Pages 404.html redirect preserves subpath and sso_token for HashRouter', () => {
+    const html = fs.readFileSync(path.resolve(process.cwd(), 'public/404.html'), 'utf8');
+    const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+    expect(scriptMatch).toBeTruthy();
+
+    let redirectedTo = '';
+    const fakeWindow = {
+      location: {
+        protocol: 'https:',
+        host: 'stb6636.github.io',
+        pathname: '/VahicleApp-VR/sso-callback',
+        search: '?sso_token=ONE_TIME_TOK',
+        replace: (target: string) => {
+          redirectedTo = target;
+        },
+      },
+    };
+
+    const runner = new Function('window', scriptMatch![1]);
+    runner(fakeWindow);
+
+    expect(redirectedTo).toBe('https://stb6636.github.io/VahicleApp-VR/#/sso-callback?sso_token=ONE_TIME_TOK');
+    const parsed = new URL(redirectedTo);
+    expect(extractSsoTokenFromLocation(parsed.search, parsed.hash)).toBe('ONE_TIME_TOK');
   });
 
   it('blocks direct URL access when sessionStorage handshake flag is missing', async () => {

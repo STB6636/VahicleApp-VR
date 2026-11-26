@@ -1,0 +1,6 @@
+# Supabase Data API Exposed Schemas for Vehicle App (Multi-Schema on Portal SSO-STB)
+# Declares ONLY `[api].schemas` so `supabase config push` leaves all Portal SSO auth,
+# storage, pooler, and edge-function settings untouched.
+
+[api]
+schemas = ["public", "graphql_public", "vehicleapp"]

@@ -96,6 +96,15 @@ export async function verifyExistingPortalSession(): Promise<boolean> {
       throw new Error('ไม่สามารถตรวจสอบข้อมูลผู้ใช้งานจาก Portal SSO-VR ได้');
     }
 
+    if (me.user.must_change_credential) {
+      await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+      store.setBlocked(
+        'NO_APP_PERMISSION',
+        'กรุณาเปลี่ยนรหัสผ่านเริ่มต้นใน Portal SSO-VR ก่อนเข้าใช้งานระบบนี้'
+      );
+      return false;
+    }
+
     if (me.user.role !== 'SUPERADMIN' && !me.app_permission) {
       await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
       store.setBlocked(
@@ -105,8 +114,13 @@ export async function verifyExistingPortalSession(): Promise<boolean> {
       return false;
     }
 
+    const prevUser = store.user;
     store.setSession({
-      user: me.user,
+      user: {
+        ...me.user,
+        username: me.user.username ?? prevUser?.username,
+        email: me.user.email ?? prevUser?.email ?? me.personnel?.email ?? null,
+      },
       personnel: me.personnel ?? null,
       appPermission: me.app_permission ?? null,
     });

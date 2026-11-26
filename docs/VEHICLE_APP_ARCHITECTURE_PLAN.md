@@ -113,8 +113,8 @@
 
 ### 3.2 การเปิด Schema `vehicleapp` บน Supabase
 
-1. รัน Migration `supabase/migrations/001_vehicleapp_schema.sql` (ดำเนินการสร้างจริงบนโปรเจกต์ `Portal SSO-STB` เรียบร้อยแล้ว — 6 ตาราง, 1 วิว, 14 RLS Policies, 4 ประเภทยานพาหนะ, 9 ค่าตั้งต้น)
-2. ไปที่ **Supabase Dashboard → Project Settings → Data API → Exposed schemas** เพิ่ม `vehicleapp` (เป็น `public, graphql_public, vehicleapp`) แล้วกด **Save**
+1. รัน Migration `supabase/migrations/001_vehicleapp_schema.sql` และ `supabase/migrations/002_vehicleapp_hardening.sql` บนโปรเจกต์ `Portal SSO-STB` เรียบร้อยแล้ว (6 ตาราง, 1 วิว `v_vehicles_enriched` พร้อม PDPA-safe `fn_get_caretaker_display`, 14 RLS Policies, Terminal State Guards, Revoke `PUBLIC` Grants, 4 ประเภทยานพาหนะ, 9 ค่าตั้งต้น)
+2. เปิดใช้งาน **Supabase Data API Exposed Schemas** เป็น `public, graphql_public, vehicleapp` ผ่าน `supabase/config.toml` (`supabase config push`) เรียบร้อยแล้ว และยืนยัน PostgREST ตอบรับ Schema `vehicleapp` พร้อมบล็อก `anon` (`42501` / HTTP 401) แล้ว
 
 ---
 

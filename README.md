@@ -15,7 +15,10 @@
 
 ## โครงสร้างฐานข้อมูล Schema `vehicleapp`
 
-ไฟล์ Migration: [`supabase/migrations/001_vehicleapp_schema.sql`](./supabase/migrations/001_vehicleapp_schema.sql)
+ไฟล์ Migration:
+- [`supabase/migrations/001_vehicleapp_schema.sql`](./supabase/migrations/001_vehicleapp_schema.sql) (Schema, 6 Tables, View, RPCs, 14 RLS Policies, Seed Data)
+- [`supabase/migrations/002_vehicleapp_hardening.sql`](./supabase/migrations/002_vehicleapp_hardening.sql) (PDPA-Safe Caretaker Display Helper, Terminal Status Transition Guards, Scoped Office Lv2 Access, Revoke `PUBLIC` Function Grants)
+- [`supabase/config.toml`](./supabase/config.toml) (`[api].schemas = ["public", "graphql_public", "vehicleapp"]` — **Exposed บน Supabase Data API เรียบร้อยแล้ว**)
 
 | ตาราง / วิว | หน้าที่ |
 | :--- | :--- |
@@ -29,9 +32,7 @@
 
 ## การตั้งค่าและเริ่มต้นใช้งาน
 
-1. **เปิด PostgREST Exposed Schema ใน Supabase Dashboard:**
-   - ไปที่ **Project Settings → Data API → Exposed schemas**
-   - เพิ่ม `vehicleapp` ต่อท้าย (เช่น `public, graphql_public, vehicleapp`) แล้วกด **Save**
+1. **Supabase Schema `vehicleapp`:** สร้างและเปิด Expose บน Data API (`public, graphql_public, vehicleapp`) เรียบร้อยแล้วบนโปรเจกต์ `Portal SSO-STB`
 2. **ลงทะเบียนแอปใน Portal SSO-VR (`/admin/webapps`):**
    - `app_code`: `VEHICLE_APP`
    - `url`: `https://<your-domain>/sso-callback` (หรือ `http://localhost:5174/#/sso-callback` ช่วงพัฒนา)

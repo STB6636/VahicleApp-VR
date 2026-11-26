@@ -6,7 +6,10 @@
   <script>
     (function () {
       var l = window.location;
-      l.replace(l.protocol + '//' + l.host + l.pathname.split('/').slice(0, 2).join('/') + '/?/' + l.search);
+      var segs = l.pathname.split('/').filter(Boolean);
+      var repoBase = segs.length > 0 ? '/' + segs[0] : '';
+      var subPath = segs.length > 1 ? '/' + segs.slice(1).join('/') : '/';
+      l.replace(l.protocol + '//' + l.host + repoBase + '/#' + subPath + (l.search || ''));
     })();
   </script>
 </head>

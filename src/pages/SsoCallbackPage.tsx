@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { extractSsoTokenFromLocation } from '@/lib/portalClient';
+import { extractSsoTokenFromLocation, stripSsoTokenFromUrl } from '@/lib/portalClient';
 import { exchangeSsoTokenAndSignIn } from '@/services/ssoAuthService';
 import { useAuthStore } from '@/stores/useAuthStore';
+
+function clearSsoTokenFromBrowserUrl(): void {
+  try {
+    const cleanUrl = stripSsoTokenFromUrl(window.location.href);
+    window.history.replaceState({}, document.title, cleanUrl);
+  } catch {
+    // ignore history errors
+  }
+}
 
 export function SsoCallbackPage() {
   const location = useLocation();
@@ -20,6 +29,7 @@ export function SsoCallbackPage() {
     );
 
     if (!ssoToken) {
+      clearSsoTokenFromBrowserUrl();
       useAuthStore
         .getState()
         .setBlocked('DIRECT_ACCESS_BLOCKED', 'ไม่พบ SSO Token กรุณาเปิดระบบผ่าน Portal SSO-VR เท่านั้น');
@@ -27,19 +37,14 @@ export function SsoCallbackPage() {
       return;
     }
 
+    // Immediately strip one-time sso_token from browser URL bar before network I/O
+    // so neither success nor failure can leak the token or trigger a HashRouter loop.
+    clearSsoTokenFromBrowserUrl();
+
     (async () => {
       try {
         setStatusMessage('กำลังแลก One-Time SSO Token และสร้างเซสชัน...');
         await exchangeSsoTokenAndSignIn(ssoToken);
-
-        // Immediately strip one-time sso_token from browser URL bar
-        try {
-          const cleanUrl = `${window.location.pathname}${window.location.hash.split('?')[0] || ''}`;
-          window.history.replaceState({}, document.title, cleanUrl);
-        } catch {
-          // ignore history errors
-        }
-
         navigate('/dashboard', { replace: true });
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'ไม่สามารถยืนยันตัวตนจาก Portal SSO-VR ได้';

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>ระบบต่อภาษีและใบอนุญาตยานพาหนะราชการ | สำนักเทศกิจ กรุงเทพมหานคร</title>
+
+  <!-- Google Fonts: Sarabun (BMA Enterprise Design System V2.5 — Aligned with Portal SSO-VR) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet" />
+
+  <!-- Pre-paint Theme Hydration (Zero FOUC) -->
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('vehicleapp_theme_mode');
+        if (saved === 'dark') {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+      } catch (_) {}
+    })();
+  </script>
+
+  <!-- Remote version.json + Hard Cache Purge (Auto-Stamped by .ai_map/vscode_ast_mapper.mjs) -->
+  <script>
+    (function () {
+      var CURRENT_APP_BUILD = '20261126_6459e1d0';
+      var BUILD_STORAGE_KEY = 'vehicleapp_app_build';
+      var RELOAD_GUARD_KEY = 'vehicleapp_reloaded_build';
+      var PRESERVE_PREFIXES = ['sb-', 'vehicleapp_'];
+      var PRESERVE_EXACT = [BUILD_STORAGE_KEY];
+
+      function shouldPreserveKey(key) {
+        if (PRESERVE_EXACT.indexOf(key) !== -1) return true;
+        for (var i = 0; i < PRESERVE_PREFIXES.length; i++) {
+          if (key.indexOf(PRESERVE_PREFIXES[i]) === 0) return true;
+        }
+        return false;
+      }
+
+      try {
+        var url = new URL(window.location.href);
+        if (url.searchParams.has('_cb')) {
+          url.searchParams.delete('_cb');
+          window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+        }
+      } catch (_) {}
+
+      function performHardCachePurge(targetBuild) {
+        try {
+          if (sessionStorage.getItem(RELOAD_GUARD_KEY) === targetBuild) return;
+          sessionStorage.setItem(RELOAD_GUARD_KEY, targetBuild);
+          Object.keys(localStorage).forEach(function (key) {
+            if (!shouldPreserveKey(key)) localStorage.removeItem(key);
+          });
+          localStorage.setItem(BUILD_STORAGE_KEY, targetBuild);
+          var nextUrl = new URL(window.location.href);
+          nextUrl.searchParams.set('_cb', targetBuild);
+          window.location.replace(nextUrl.toString());
+        } catch (_) {}
+      }
+
+      try {
+        var prevBuild = localStorage.getItem(BUILD_STORAGE_KEY);
+        if (prevBuild && prevBuild !== CURRENT_APP_BUILD) {
+          performHardCachePurge(CURRENT_APP_BUILD);
+          return;
+        }
+        if (!prevBuild) {
+          localStorage.setItem(BUILD_STORAGE_KEY, CURRENT_APP_BUILD);
+        }
+      } catch (_) {}
+    })();
+  </script>
+</head>
+<body class="bg-[#E7ECE9] dark:bg-[#0B132B] text-slate-800 dark:text-slate-100 antialiased">
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>

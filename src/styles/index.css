@@ -1,0 +1,29 @@
+/* ==========================================================================
+   Vehicle App — Tailwind CSS v4 Entry + BMA Enterprise Design System V2.5
+   Theme & Style 100% aligned with Portal SSO-VR
+   Font: Google Font Sarabun | Icons: Font Awesome 6 Free
+   ========================================================================== */
+@import "tailwindcss";
+@import "@fortawesome/fontawesome-free/css/all.min.css";
+
+/* Class-based Dark Mode (.dark on <html>) */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* BMA Enterprise Design System Tokens */
+@theme {
+  --color-bma-gold: #C5A059;
+  --color-bma-dark: #00351B;
+  --color-bma-primary: #00744B;
+  --color-bma-light: #00A368;
+  --color-bma-accent: #F2B82E;
+  --font-sans: "Sarabun", ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+}
+
+@import "./bma-theme.css";

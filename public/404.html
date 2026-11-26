@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <title>Redirecting — Vehicle App</title>
+  <script>
+    (function () {
+      var l = window.location;
+      l.replace(l.protocol + '//' + l.host + l.pathname.split('/').slice(0, 2).join('/') + '/?/' + l.search);
+    })();
+  </script>
+</head>
+<body></body>
+</html>

@@ -6,6 +6,7 @@ import { signOutVehicleApp } from '@/services/ssoAuthService';
 import { PORTAL_HOME_URL } from '@/lib/portalClient';
 import { getCurrentYearBeBangkok } from '@/lib/thaiDate';
 import { useUiStore } from '@/stores/useUiStore';
+import { NotificationBell } from '@/components/common/NotificationBell';
 
 interface NavItemDef {
   id: string;
@@ -248,13 +249,13 @@ export function VehicleShell() {
   );
 
   return (
-    <div className="min-h-screen flex bg-[#E7ECE9] dark:bg-[#0B132B] text-slate-800 dark:text-slate-100">
-      <aside className="hidden lg:block w-72 shrink-0 sticky top-0 h-screen shadow-xl z-30">
+    <div className="min-h-screen flex bg-[#E7ECE9] dark:bg-[#0B132B] text-slate-800 dark:text-slate-100 print:bg-white print:text-black">
+      <aside className="hidden lg:block w-72 shrink-0 sticky top-0 h-screen shadow-xl z-30 print:hidden">
         {renderSidebar()}
       </aside>
 
       {mobileMenuOpen && (
-        <div className="fixed inset-0 z-[9980] lg:hidden flex">
+        <div className="fixed inset-0 z-[9980] lg:hidden flex print:hidden">
           <div
             className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs"
             onClick={() => setMobileMenuOpen(false)}
@@ -263,8 +264,8 @@ export function VehicleShell() {
         </div>
       )}
 
-      <div className="flex-1 min-w-0 flex flex-col min-h-screen pb-16 lg:pb-0">
-        <header className="sticky top-0 z-20 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
+      <div className="flex-1 min-w-0 flex flex-col min-h-screen pb-16 lg:pb-0 print:pb-0">
+        <header className="sticky top-0 z-20 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 px-4 sm:px-6 py-3 flex items-center justify-between gap-3 print:hidden">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
@@ -303,6 +304,7 @@ export function VehicleShell() {
               <i className="fa-solid fa-shield-halved text-[10px]" />
               <span>SSO Verified</span>
             </span>
+            <NotificationBell />
             <button
               type="button"
               onClick={toggleTheme}
@@ -314,17 +316,17 @@ export function VehicleShell() {
           </div>
         </header>
 
-        <main className="flex-1 p-4 sm:p-6 max-w-[1600px] w-full mx-auto">
+        <main className="flex-1 p-4 sm:p-6 max-w-[1600px] w-full mx-auto print:p-0 print:max-w-none">
           <Outlet />
         </main>
 
-        <footer className="px-6 py-3 text-center text-xs text-slate-500 dark:text-slate-400 border-t border-slate-200/70 dark:border-slate-800/80">
+        <footer className="px-6 py-3 text-center text-xs text-slate-500 dark:text-slate-400 border-t border-slate-200/70 dark:border-slate-800/80 print:hidden">
           ระบบต่อภาษีและใบอนุญาตยานพาหนะราชการ (Schema: <code>vehicleapp</code>) · เชื่อมต่อ Portal SSO-VR · พ.ศ. {yearBuddhist}
         </footer>
       </div>
 
       {/* Mobile Bottom Navigation */}
-      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-2 py-1.5 flex items-center justify-around">
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-2 py-1.5 flex items-center justify-around print:hidden">
         {navItems.slice(0, 5).map((item) => (
           <NavLink
             key={item.id}

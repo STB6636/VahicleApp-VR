@@ -10,13 +10,15 @@
     "preview": "vite preview --port 4174",
     "test": "vitest run",
     "test:watch": "vitest",
-    "sync:map": "node ./.ai_map/vscode_ast_mapper.mjs"
+    "sync:map": "node ./.ai_map/vscode_ast_mapper.mjs",
+    "migrate:sheets": "node ./scripts/migrate-from-sheets.mjs"
   },
   "dependencies": {
     "@fortawesome/fontawesome-free": "^6.7.2",
     "@hookform/resolvers": "^3.9.1",
     "@supabase/supabase-js": "^2.49.1",
     "@tanstack/react-query": "^5.66.0",
+    "exceljs": "^4.4.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.54.2",

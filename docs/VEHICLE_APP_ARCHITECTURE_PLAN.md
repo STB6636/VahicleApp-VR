@@ -138,9 +138,9 @@
 | ระยะ (Phase) | ขอบเขตงานหลัก | สถานะ |
 | :--- | :--- | :--- |
 | **Phase 1: Foundation, Schema, SSO & AI Workflow** | โคลน Ex Project, ติดตั้ง AI-Brain, สร้าง Schema `vehicleapp` จริงบน Supabase (6 ตาราง + วิว + RPC + 14 RLS), วางโครง Vite 6 + React 18 + TS + BMA Theme, เชื่อม Portal SSO SDK, บล็อกการเข้าลิงก์ตรง (`PortalOnlyGuard` + `sessionStorage`), Unit Tests + Push GitHub | **✅ ดำเนินการเสร็จสมบูรณ์** |
-| **Phase 2: Core Vehicle CRUD & Activity Engine** | สร้าง `VehicleFormModal` (รถ/เรือ + Smart Caretaker Combobox จาก `portal-api /personnel` + `ThaiDatePicker` พ.ศ.), `VehicleDetailModal`, `ActivityRecordModal` (Single & Multi-Vehicle Batch + Picker), `ActivityEditModal`, และ Notification Bell เชื่อม `vehicleapp.notification_reads` | ⏳ รออนุมัติเริ่มพัฒนา |
-| **Phase 3: Reports (PDF/Excel), Drive Storage Bridge & Settings UI** | สร้างหน้าพิมพ์รายงาน A4 (ตรา กทม. + สรุปยอด 9 สถานะ), ส่งออก ExcelJS, เชื่อม GAS Google Drive Bridge สำหรับไฟล์ใบอนุญาตเรือ/หลักฐานต่อภาษี, หน้าตั้งค่าแบบตรวจสอบลิงก์และ Audit Log viewer | ⏳ รออนุมัติเริ่มพัฒนา |
-| **Phase 4: Data Migration, E2E SSO Verification & Production Rollout** | สคริปต์นำเข้าข้อมูลจาก Google Sheets เดิม (`Vehicles`, `Activity_History`) จับคู่ `org_units` และ `personnel` บน Supabase, ทดสอบ E2E จาก Portal SSO-VR จริง (3 บทบาท), Deploy Cloudflare Pages + GitHub Pages | ⏳ รออนุมัติเริ่มพัฒนา |
+| **Phase 2: Core Vehicle CRUD & Activity Engine** | สร้าง `VehicleFormModal` (รถ/เรือ + Smart Caretaker Combobox จาก `portal-api /personnel` + `ThaiDatePicker` พ.ศ.), `VehicleDetailModal`, `ActivityRecordModal` (Single & Multi-Vehicle Batch + Picker), `ActivityEditModal`, และ Notification Bell เชื่อม `vehicleapp.notification_reads` | **✅ ดำเนินการเสร็จสมบูรณ์** |
+| **Phase 3: Reports (PDF/Excel), Drive Storage Bridge & Settings UI** | สร้างหน้าพิมพ์รายงาน A4 (ตรา กทม. + สรุปยอด 9 สถานะ), ส่งออก ExcelJS, เชื่อม GAS Google Drive Bridge สำหรับไฟล์ใบอนุญาตเรือ/หลักฐานต่อภาษี, หน้าตั้งค่าแบบตรวจสอบลิงก์และ Audit Log viewer | **✅ ดำเนินการเสร็จสมบูรณ์** |
+| **Phase 4: Data Migration, E2E SSO Verification & Production Rollout** | สคริปต์นำเข้าข้อมูลจาก Google Sheets เดิม (`scripts/migrate-from-sheets.mjs`), สคริปต์ลงทะเบียน `VEHICLE_APP` ใน Portal SSO-VR (`supabase/scripts/register_vehicle_app_portal_sso.sql`), 36 Unit/Component Tests ผ่าน 100%, Push ขึ้น GitHub `STB6636/VahicleApp-VR` (รอลงทะเบียนแอปใน Portal SSO-VR จริง + รันย้ายข้อมูลจริง + E2E 3 บทบาท) | **🟡 โค้ดและสคริปต์เสร็จสมบูรณ์ (รอรันลงทะเบียน Portal SSO & ย้ายข้อมูลจริง)** |
 
 ---
 

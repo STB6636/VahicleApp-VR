@@ -17,4 +17,8 @@ export const QUERY_KEYS = {
   activities: (vehicleId?: string) => ['vehicleapp', 'activities', vehicleId ?? 'all'] as const,
   settings: ['vehicleapp', 'settings'] as const,
   schemaHealth: ['vehicleapp', 'schema_health'] as const,
+  notificationReads: ['vehicleapp', 'notification_reads'] as const,
+  auditLogs: ['vehicleapp', 'audit_logs'] as const,
+  portalOrgUnits: ['portal', 'org_units'] as const,
+  portalPersonnel: ['portal', 'personnel'] as const,
 };

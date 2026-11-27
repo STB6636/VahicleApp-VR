@@ -1,12 +1,20 @@
 import { useState, useMemo, useEffect } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from '@/contexts/ThemeContext';
-import { useAuthStore, isVehicleSuperAdmin } from '@/stores/useAuthStore';
+import {
+  useAuthStore,
+  isVehicleSuperAdmin,
+  getVehicleRoleLabel,
+  getAdminScopeSummary,
+} from '@/stores/useAuthStore';
 import { signOutVehicleApp } from '@/services/ssoAuthService';
 import { PORTAL_HOME_URL } from '@/lib/portalClient';
 import { getCurrentYearBeBangkok } from '@/lib/thaiDate';
+import { formatCaretakerName, formatCaretakerPositionLevel } from '@/lib/caretakerFormatter';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { useUiStore } from '@/stores/useUiStore';
 import { NotificationBell } from '@/components/common/NotificationBell';
+import { ResponsiveModal } from '@/components/common/ResponsiveModal';
 
 interface NavItemDef {
   id: string;
@@ -43,12 +51,12 @@ const ROUTE_META: Record<string, { title: string; subtitle: string; activeId: st
   '/settings': {
     activeId: 'settings',
     title: 'ตั้งค่าระบบยานพาหนะ',
-    subtitle: 'กำหนดวันแจ้งเตือน พารามิเตอร์ Google Drive และตรวจสอบสุขภาพ Schema vehicleapp',
+    subtitle: 'ตั้งค่าทั่วไป Google Drive Bridge ประเภทยานพาหนะ สุขภาพฐานข้อมูล และ Audit Logs',
   },
 };
 
 export function VehicleShell() {
-  const { isDark, toggleTheme } = useTheme();
+  const { isDark, toggleTheme, applyDefaultThemeIfUnset } = useTheme();
   const user = useAuthStore((s) => s.user);
   const personnel = useAuthStore((s) => s.personnel);
   const appPermission = useAuthStore((s) => s.appPermission);
@@ -56,14 +64,22 @@ export function VehicleShell() {
   const location = useLocation();
   const navigate = useNavigate();
 
+  const { settings, isSuccess: settingsLoaded } = useAppSettings(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const isSuper = isVehicleSuperAdmin(user, appPermission);
   const meta = ROUTE_META[location.pathname] ?? ROUTE_META['/dashboard'];
 
   useEffect(() => {
-    document.title = `${meta.title} — ระบบยานพาหนะราชการ`;
-  }, [meta.title]);
+    document.title = `${meta.title} — ${settings.appDisplayName}`;
+  }, [meta.title, settings.appDisplayName]);
+
+  useEffect(() => {
+    if (settingsLoaded) {
+      applyDefaultThemeIfUnset(settings.defaultTheme);
+    }
+  }, [settingsLoaded, settings.defaultTheme, applyDefaultThemeIfUnset]);
 
   const navItems = useMemo<NavItemDef[]>(
     () =>
@@ -135,10 +151,12 @@ export function VehicleShell() {
     return groups;
   }, [navItems]);
 
-  const displayName = personnel?.full_name || user?.username || 'ผู้ใช้งาน';
+  const displayName = personnel ? formatCaretakerName(personnel) : user?.username || 'ผู้ใช้งาน';
+  const positionLevel = formatCaretakerPositionLevel(personnel);
   const initials = displayName.trim().slice(0, 2);
-  const roleLabel = appPermission?.role_name_th || user?.role || 'USER';
+  const roleLabel = getVehicleRoleLabel(user, appPermission);
   const orgLabel = personnel?.department_name || personnel?.office_name || 'Portal SSO-VR';
+  const scopeInfo = getAdminScopeSummary(user, appPermission, orgLabel);
   const yearBuddhist = getCurrentYearBeBangkok();
 
   const handleSignOut = async () => {
@@ -154,8 +172,8 @@ export function VehicleShell() {
           <i className="fa-solid fa-car-rear text-emerald-300 text-lg" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-bold text-emerald-400 truncate">สำนักเทศกิจ กทม.</p>
-          <p className="font-extrabold text-sm text-white truncate">ระบบยานพาหนะราชการ</p>
+          <p className="text-[11px] font-bold text-emerald-400 truncate">{settings.reportHeaderOrg}</p>
+          <p className="font-extrabold text-sm text-white truncate">{settings.appDisplayName}</p>
         </div>
         <button
           type="button"
@@ -167,9 +185,17 @@ export function VehicleShell() {
         </button>
       </div>
 
-      {/* Capsule User Profile Card */}
+      {/* Clickable Capsule User Profile Card -> Read-Only Profile Modal */}
       <div className="px-3.5 py-3 border-b border-slate-800/80">
-        <div className="p-2.5 rounded-2xl bg-slate-800/70 border border-slate-700/70 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => {
+            setMobileMenuOpen(false);
+            setProfileOpen(true);
+          }}
+          title="คลิกดูข้อมูลผู้ใช้งานและขอบเขตสิทธิ์"
+          className="w-full text-left p-2.5 rounded-2xl bg-slate-800/70 hover:bg-slate-800 border border-slate-700/70 flex items-center gap-3 transition"
+        >
           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 to-teal-700 text-white font-extrabold text-xs flex items-center justify-center shrink-0 shadow-md border border-white/20">
             {initials}
           </div>
@@ -184,7 +210,8 @@ export function VehicleShell() {
               </span>
             </div>
           </div>
-        </div>
+          <i className="fa-solid fa-chevron-right text-[10px] text-slate-500 shrink-0" />
+        </button>
       </div>
 
       {/* Grouped Navigation */}
@@ -300,6 +327,21 @@ export function VehicleShell() {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            {/* ScopeBadge */}
+            <button
+              type="button"
+              onClick={() => setProfileOpen(true)}
+              title={`${scopeInfo.levelLabel}: ${scopeInfo.orgName}`}
+              className={`hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-bold transition ${
+                scopeInfo.isUnassignedAdmin
+                  ? 'bg-rose-500/12 border-rose-500/30 text-rose-700 dark:text-rose-300'
+                  : 'bg-sky-500/10 border-sky-500/25 text-sky-700 dark:text-sky-300'
+              }`}
+            >
+              <i className={`fa-solid ${scopeInfo.isUnassignedAdmin ? 'fa-triangle-exclamation' : 'fa-building-shield'} text-[10px]`} />
+              <span className="max-w-[200px] truncate">{scopeInfo.levelLabel}</span>
+            </button>
+
             <span className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-[11px] font-bold text-[#00744B] dark:text-emerald-300">
               <i className="fa-solid fa-shield-halved text-[10px]" />
               <span>SSO Verified</span>
@@ -321,7 +363,7 @@ export function VehicleShell() {
         </main>
 
         <footer className="px-6 py-3 text-center text-xs text-slate-500 dark:text-slate-400 border-t border-slate-200/70 dark:border-slate-800/80 print:hidden">
-          ระบบต่อภาษีและใบอนุญาตยานพาหนะราชการ (Schema: <code>vehicleapp</code>) · เชื่อมต่อ Portal SSO-VR · พ.ศ. {yearBuddhist}
+          {settings.appDisplayName} (Schema: <code>vehicleapp</code>) · เชื่อมต่อ Portal SSO-VR · พ.ศ. {yearBuddhist}
         </footer>
       </div>
 
@@ -342,6 +384,57 @@ export function VehicleShell() {
           </NavLink>
         ))}
       </nav>
+
+      {/* Read-only Profile & Role Scope Modal (mirrors Ex Project Profile Modal) */}
+      <ResponsiveModal
+        open={profileOpen}
+        onClose={() => setProfileOpen(false)}
+        title="ข้อมูลผู้ใช้งานและขอบเขตสิทธิ์ (Portal SSO-VR)"
+        subtitle="ข้อมูลบุคลากรเชื่อมโยงแบบ Read-Only จากระบบ Portal SSO ส่วนกลาง"
+        icon="fa-id-card"
+        size="md"
+        footer={
+          <button type="button" onClick={() => setProfileOpen(false)} className="bma-btn-primary">
+            ปิดหน้าต่าง
+          </button>
+        }
+      >
+        <div className="space-y-4 text-xs">
+          <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-[#163024] border border-slate-200 dark:border-[#244737]">
+            <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#00744B] to-[#00A368] text-white font-extrabold text-base flex items-center justify-center shrink-0">
+              {initials}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-extrabold text-slate-800 dark:text-white truncate">{displayName}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-300 truncate">{positionLevel || '-'}</p>
+              <span className="inline-block mt-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/15 text-[#00744B] dark:text-emerald-300">
+                {roleLabel}
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#163024]/70 border border-slate-200/70 dark:border-[#244737]">
+              <p className="text-[11px] text-slate-500">มุมมอง / ขอบเขตสิทธิ์</p>
+              <p className="font-bold text-slate-800 dark:text-white mt-0.5">{scopeInfo.levelLabel}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">{scopeInfo.orgName}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#163024]/70 border border-slate-200/70 dark:border-[#244737]">
+              <p className="text-[11px] text-slate-500">ชื่อผู้ใช้ (Username)</p>
+              <p className="font-bold font-mono text-slate-800 dark:text-white mt-0.5">{user?.username || '-'}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Portal Role: {user?.role || '-'}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#163024]/70 border border-slate-200/70 dark:border-[#244737]">
+              <p className="text-[11px] text-slate-500">สำนักงาน / กอง (Lv2)</p>
+              <p className="font-bold text-slate-800 dark:text-white mt-0.5">{personnel?.office_name || '-'}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#163024]/70 border border-slate-200/70 dark:border-[#244737]">
+              <p className="text-[11px] text-slate-500">ฝ่าย / ส่วน (Lv3)</p>
+              <p className="font-bold text-slate-800 dark:text-white mt-0.5">{personnel?.department_name || '-'}</p>
+            </div>
+          </div>
+        </div>
+      </ResponsiveModal>
     </div>
   );
 }

@@ -25,6 +25,27 @@ export interface VehicleTypeRow {
   icon_name: string;
   sort_order: number;
   is_active: boolean;
+  is_default?: boolean;
+}
+
+export interface VehicleTypeUpsertInput {
+  id?: string;
+  code: string;
+  name_th: string;
+  is_vessel: boolean;
+  default_caretaker_position: string | null;
+  icon_name: string;
+  sort_order?: number;
+  is_active?: boolean;
+  is_default?: boolean;
+}
+
+export interface CronStatusInfo {
+  installed: boolean;
+  active: boolean;
+  jobid?: number | null;
+  jobname: string;
+  schedule: string | null;
 }
 
 export interface VehicleEnrichedRow {
@@ -33,6 +54,7 @@ export interface VehicleEnrichedRow {
   vehicle_type_id: string;
   vehicle_type_code: string;
   vehicle_type_name: string;
+  vehicle_type_sort_order?: number | null;
   is_vessel: boolean;
   vehicle_type_icon: string;
   license_plate: string | null;

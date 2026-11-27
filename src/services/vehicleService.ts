@@ -3,13 +3,16 @@ import { useAuthStore } from '@/stores/useAuthStore';
 import type {
   AppSettingRow,
   AuditLogRow,
+  CronStatusInfo,
   NotificationReadRow,
+  PortalPersonnelDirectoryRow,
   RecordActivityInput,
   RecordActivityResult,
   UpdateActivityInput,
   VehicleActivityRow,
   VehicleEnrichedRow,
   VehicleTypeRow,
+  VehicleTypeUpsertInput,
   VehicleUpsertInput,
 } from '@/types/vehicle.types';
 
@@ -19,6 +22,16 @@ function getCurrentActor(): { userId: string | null; actorName: string } {
     userId: user?.id ?? null,
     actorName: personnel?.full_name || user?.username || 'ผู้ใช้งาน',
   };
+}
+
+function translatePgError(err: { code?: string; message?: string }, fallback: string): string {
+  if (err?.code === '23503') {
+    return 'ไม่สามารถลบรายการนี้ได้ เนื่องจากมียานพาหนะใช้งานประเภทนี้อยู่ — แนะนำให้กดปิดใช้งานแทน';
+  }
+  if (err?.code === '23505') {
+    return 'รหัสประเภทยานพาหนะ (Code) นี้มีอยู่ในระบบแล้ว กรุณาใช้รหัสอื่น';
+  }
+  return err?.message || fallback;
 }
 
 async function writeAuditLog(
@@ -57,9 +70,172 @@ export const vehicleService = {
       .from('vehicle_types')
       .select('*')
       .eq('is_active', true)
-      .order('sort_order', { ascending: true });
+      .order('sort_order', { ascending: true })
+      .order('name_th', { ascending: true });
     if (error) throw new Error(error.message);
     return (data ?? []) as VehicleTypeRow[];
+  },
+
+  async listAllVehicleTypes(): Promise<VehicleTypeRow[]> {
+    const { data, error } = await supabase
+      .from('vehicle_types')
+      .select('*')
+      .order('sort_order', { ascending: true })
+      .order('name_th', { ascending: true });
+    if (error) throw new Error(error.message);
+    return (data ?? []) as VehicleTypeRow[];
+  },
+
+  async saveVehicleType(input: VehicleTypeUpsertInput): Promise<VehicleTypeRow> {
+    const normalizedCode = input.code.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+    const normalizedName = input.name_th.trim();
+    if (!normalizedCode || !normalizedName) {
+      throw new Error('กรุณาระบุรหัส (Code) และชื่อประเภทยานพาหนะ (ภาษาไทย)');
+    }
+
+    if (input.is_default) {
+      await supabase
+        .from('vehicle_types')
+        .update({ is_default: false })
+        .eq('is_default', true);
+    }
+
+    const rowPayload = {
+      code: normalizedCode,
+      name_th: normalizedName,
+      is_vessel: Boolean(input.is_vessel),
+      default_caretaker_position: input.default_caretaker_position?.trim() || null,
+      icon_name: input.icon_name?.trim() || (input.is_vessel ? 'fa-ship' : 'fa-car-side'),
+      ...(input.sort_order != null ? { sort_order: input.sort_order } : {}),
+      ...(input.is_active != null ? { is_active: input.is_active } : {}),
+      ...(input.is_default != null ? { is_default: input.is_default } : {}),
+    };
+
+    if (input.id) {
+      const { data, error } = await supabase
+        .from('vehicle_types')
+        .update(rowPayload)
+        .eq('id', input.id)
+        .select('*')
+        .single();
+      if (error) throw new Error(translatePgError(error, 'ไม่สามารถแก้ไขประเภทยานพาหนะได้'));
+      const saved = data as VehicleTypeRow;
+      await writeAuditLog('UPDATE_VEHICLE_TYPE', 'vehicle_types', saved.id, {
+        code: saved.code,
+        name_th: saved.name_th,
+        is_vessel: saved.is_vessel,
+      });
+      return saved;
+    }
+
+    const { data: existing } = await supabase
+      .from('vehicle_types')
+      .select('sort_order')
+      .order('sort_order', { ascending: false })
+      .limit(1);
+    const nextOrder = Number((existing?.[0] as { sort_order?: number } | undefined)?.sort_order ?? 0) + 1;
+
+    const { data, error } = await supabase
+      .from('vehicle_types')
+      .insert({
+        ...rowPayload,
+        sort_order: input.sort_order ?? nextOrder,
+        is_active: input.is_active ?? true,
+        is_default: input.is_default ?? false,
+      })
+      .select('*')
+      .single();
+    if (error) throw new Error(translatePgError(error, 'ไม่สามารถเพิ่มประเภทยานพาหนะได้'));
+    const saved = data as VehicleTypeRow;
+    await writeAuditLog('CREATE_VEHICLE_TYPE', 'vehicle_types', saved.id, {
+      code: saved.code,
+      name_th: saved.name_th,
+      is_vessel: saved.is_vessel,
+    });
+    return saved;
+  },
+
+  async saveVehicleTypesBatch(items: VehicleTypeUpsertInput[]): Promise<VehicleTypeRow[]> {
+    const valid = items.filter((i) => i.code.trim() && i.name_th.trim());
+    if (valid.length === 0) {
+      throw new Error('กรุณากรอกข้อมูลประเภทยานพาหนะอย่างน้อย 1 รายการ');
+    }
+
+    const { data: existing } = await supabase
+      .from('vehicle_types')
+      .select('sort_order')
+      .order('sort_order', { ascending: false })
+      .limit(1);
+    let nextOrder = Number((existing?.[0] as { sort_order?: number } | undefined)?.sort_order ?? 0) + 1;
+
+    const rows = valid.map((item) => ({
+      code: item.code.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_'),
+      name_th: item.name_th.trim(),
+      is_vessel: Boolean(item.is_vessel),
+      default_caretaker_position: item.default_caretaker_position?.trim() || null,
+      icon_name: item.icon_name?.trim() || (item.is_vessel ? 'fa-ship' : 'fa-car-side'),
+      sort_order: nextOrder++,
+      is_active: true,
+      is_default: false,
+    }));
+
+    const { data, error } = await supabase.from('vehicle_types').insert(rows).select('*');
+    if (error) throw new Error(translatePgError(error, 'ไม่สามารถเพิ่มประเภทยานพาหนะแบบหลายรายการได้'));
+    const saved = (data ?? []) as VehicleTypeRow[];
+    await writeAuditLog('BATCH_CREATE_VEHICLE_TYPES', 'vehicle_types', null, {
+      count: saved.length,
+      codes: saved.map((s) => s.code),
+    });
+    return saved;
+  },
+
+  async reorderVehicleTypes(orderedIds: string[]): Promise<void> {
+    for (let i = 0; i < orderedIds.length; i++) {
+      const { error } = await supabase
+        .from('vehicle_types')
+        .update({ sort_order: i + 1 })
+        .eq('id', orderedIds[i]);
+      if (error) throw new Error(`สลับลำดับไม่สำเร็จ: ${error.message}`);
+    }
+    await writeAuditLog('REORDER_VEHICLE_TYPES', 'vehicle_types', null, {
+      ordered_ids: orderedIds,
+    });
+  },
+
+  async toggleVehicleTypeActive(id: string, isActive: boolean): Promise<void> {
+    const { error } = await supabase
+      .from('vehicle_types')
+      .update({
+        is_active: isActive,
+        ...(isActive ? {} : { is_default: false }),
+      })
+      .eq('id', id);
+    if (error) throw new Error(error.message);
+    await writeAuditLog('TOGGLE_VEHICLE_TYPE_ACTIVE', 'vehicle_types', id, { is_active: isActive });
+  },
+
+  async setDefaultVehicleType(id: string): Promise<void> {
+    const { error: clearErr } = await supabase
+      .from('vehicle_types')
+      .update({ is_default: false })
+      .eq('is_default', true);
+    if (clearErr) throw new Error(clearErr.message);
+
+    const { error } = await supabase
+      .from('vehicle_types')
+      .update({ is_default: true, is_active: true })
+      .eq('id', id);
+    if (error) throw new Error(error.message);
+    await writeAuditLog('SET_DEFAULT_VEHICLE_TYPE', 'vehicle_types', id, {});
+  },
+
+  async deleteVehicleType(id: string, meta?: { code?: string; name_th?: string }): Promise<void> {
+    const { error } = await supabase.from('vehicle_types').delete().eq('id', id);
+    if (error) throw new Error(translatePgError(error, 'ไม่สามารถลบประเภทยานพาหนะได้'));
+    await writeAuditLog('DELETE_VEHICLE_TYPE', 'vehicle_types', id, {
+      code: meta?.code ?? null,
+      name_th: meta?.name_th ?? null,
+    });
   },
 
   async createVehicle(input: VehicleUpsertInput): Promise<{ id: string; vehicle_code: string }> {
@@ -109,6 +285,22 @@ export const vehicleService = {
     return updated;
   },
 
+  async updateVehicleAttachment(
+    id: string,
+    attachment: { attachment_folder_id: string | null; latest_file_url: string | null }
+  ): Promise<void> {
+    const { userId } = getCurrentActor();
+    const { error } = await supabase
+      .from('vehicles')
+      .update({
+        attachment_folder_id: attachment.attachment_folder_id,
+        latest_file_url: attachment.latest_file_url,
+        updated_by: userId,
+      })
+      .eq('id', id);
+    if (error) throw new Error(error.message);
+  },
+
   async deleteVehicle(id: string, meta?: { vehicle_code?: string; vehicle_label?: string }): Promise<void> {
     const { error } = await supabase.from('vehicles').delete().eq('id', id);
     if (error) throw new Error(error.message);
@@ -116,6 +308,19 @@ export const vehicleService = {
       vehicle_code: meta?.vehicle_code ?? null,
       vehicle_label: meta?.vehicle_label ?? null,
     });
+  },
+
+  async listCaretakerCandidates(params: {
+    officeId?: string | null;
+    departmentId?: string | null;
+  }): Promise<PortalPersonnelDirectoryRow[]> {
+    if (!params.departmentId && !params.officeId) return [];
+    const { data, error } = await supabase.rpc('fn_list_caretaker_candidates', {
+      p_office_id: params.officeId || null,
+      p_department_id: params.departmentId || null,
+    });
+    if (error) throw new Error(error.message);
+    return (data ?? []) as PortalPersonnelDirectoryRow[];
   },
 
   async listRecentActivities(limit = 100, vehicleId?: string): Promise<VehicleActivityRow[]> {
@@ -207,17 +412,22 @@ export const vehicleService = {
     return (data ?? []) as AppSettingRow[];
   },
 
-  async updateSettings(updates: Array<{ key: string; value: string }>): Promise<void> {
+  async updateSettings(
+    updates: Array<{ key: string; value: string; description?: string; setting_group?: string }>
+  ): Promise<void> {
     if (updates.length === 0) return;
     const { userId } = getCurrentActor();
     for (const item of updates) {
-      const { error } = await supabase
-        .from('app_settings')
-        .update({
+      const { error } = await supabase.from('app_settings').upsert(
+        {
+          key: item.key,
           value: item.value,
+          ...(item.description ? { description: item.description } : {}),
+          ...(item.setting_group ? { setting_group: item.setting_group } : {}),
           updated_by: userId,
-        })
-        .eq('key', item.key);
+        },
+        { onConflict: 'key' }
+      );
       if (error) throw new Error(`บันทึกค่า ${item.key} ไม่สำเร็จ: ${error.message}`);
     }
     await writeAuditLog('UPDATE_SETTINGS', 'app_settings', null, {
@@ -255,5 +465,11 @@ export const vehicleService = {
     const { data, error } = await supabase.rpc('fn_schema_health');
     if (error) throw new Error(error.message);
     return data;
+  },
+
+  async getCronStatus(): Promise<CronStatusInfo> {
+    const { data, error } = await supabase.rpc('fn_get_cron_status');
+    if (error) throw new Error(error.message);
+    return data as CronStatusInfo;
   },
 };

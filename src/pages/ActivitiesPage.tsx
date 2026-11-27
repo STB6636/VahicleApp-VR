@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { vehicleService } from '@/services/vehicleService';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { QUERY_KEYS } from '@/lib/queryClient';
 import { ACTIVITY_TYPE_LIST } from '@/lib/vehicleStatus';
 import { VehicleStatusBadge } from '@/components/common/VehicleStatusBadge';
@@ -12,14 +13,14 @@ import { formatThaiDate, formatThaiDateTime } from '@/lib/thaiDate';
 import { useAuthStore, isVehicleAdminOrAbove } from '@/stores/useAuthStore';
 import type { VehicleActivityRow, VehicleEnrichedRow } from '@/types/vehicle.types';
 
-const PAGE_SIZE = 10;
-
 export function ActivitiesPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const appPermission = useAuthStore((s) => s.appPermission);
   const canEdit = isVehicleAdminOrAbove(user, appPermission);
+  const { settings } = useAppSettings(true);
+  const pageSize = settings.activitiesPageSize;
 
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -94,12 +95,12 @@ export function ActivitiesPage() {
     });
   }, [activities, typeFilter, search, vehicleMap]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
   const paginated = useMemo(() => {
-    const start = (safePage - 1) * PAGE_SIZE;
-    return filtered.slice(start, start + PAGE_SIZE);
-  }, [filtered, safePage]);
+    const start = (safePage - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, safePage, pageSize]);
 
   return (
     <div className="space-y-4">

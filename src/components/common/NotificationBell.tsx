@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { vehicleService } from '@/services/vehicleService';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { QUERY_KEYS } from '@/lib/queryClient';
 import {
   VEHICLE_STATUS_MAP,
@@ -20,8 +21,10 @@ export interface VehicleNotificationItem {
 
 export function buildVehicleNotifications(
   vehicles: VehicleEnrichedRow[],
-  readRefKeys: ReadonlySet<string>
+  readRefKeys: ReadonlySet<string>,
+  options?: { includeMaintenance?: boolean }
 ): VehicleNotificationItem[] {
+  const includeMaintenance = Boolean(options?.includeMaintenance);
   return vehicles
     .filter((v) => {
       const st = v.computed_status_code || v.status_code;
@@ -29,7 +32,8 @@ export function buildVehicleNotifications(
         st === 'EXPIRED' ||
         st === 'MAINTENANCE_EXPIRED' ||
         st === 'WARNING' ||
-        st === 'MAINTENANCE_WARNING'
+        st === 'MAINTENANCE_WARNING' ||
+        (includeMaintenance && st === 'MAINTENANCE')
       );
     })
     .map((v) => {
@@ -57,6 +61,8 @@ export function NotificationBell() {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
 
+  const { settings } = useAppSettings(true);
+
   const { data: vehicles = [] } = useQuery({
     queryKey: QUERY_KEYS.vehicles,
     queryFn: vehicleService.listVehicles,
@@ -77,8 +83,11 @@ export function NotificationBell() {
   const readSet = useMemo(() => new Set(reads.map((r) => r.ref_key)), [reads]);
 
   const items = useMemo(
-    () => buildVehicleNotifications(vehicles, readSet),
-    [vehicles, readSet]
+    () =>
+      buildVehicleNotifications(vehicles, readSet, {
+        includeMaintenance: settings.notifyMaintenanceStatus,
+      }),
+    [vehicles, readSet, settings.notifyMaintenanceStatus]
   );
 
   const unreadItems = useMemo(() => items.filter((i) => !i.isRead), [items]);
@@ -153,19 +162,17 @@ export function NotificationBell() {
             {items.length === 0 ? (
               <div className="py-10 px-4 text-center text-xs text-slate-400">
                 <i className="fa-solid fa-circle-check text-2xl text-emerald-500/60 mb-2 block" />
-                ไม่มียานพาหนะที่ขาดต่ออายุหรือใกล้หมดอายุในขณะนี้
+                ไม่มียานพาหนะที่ต้องแจ้งเตือนในขณะนี้
               </div>
             ) : (
-              items.slice(0, 30).map((item) => {
+              items.slice(0, settings.notificationMaxItems).map((item) => {
                 const v = item.vehicle;
                 const st = v.computed_status_code || v.status_code;
                 const days = v.days_until_expiry;
                 return (
-                  <button
+                  <div
                     key={item.refKey}
-                    type="button"
-                    onClick={() => handleOpenItem(item)}
-                    className={`w-full text-left px-4 py-3 flex items-start gap-3 transition hover:bg-slate-50 dark:hover:bg-white/5 ${
+                    className={`px-4 py-3 flex items-start gap-2.5 transition hover:bg-slate-50 dark:hover:bg-white/5 ${
                       item.isRead ? 'opacity-65' : 'bg-emerald-50/35 dark:bg-emerald-950/20'
                     }`}
                   >
@@ -174,7 +181,11 @@ export function NotificationBell() {
                         item.isRead ? 'bg-slate-300 dark:bg-slate-600' : 'bg-rose-500'
                       }`}
                     />
-                    <div className="min-w-0 flex-1 space-y-1">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenItem(item)}
+                      className="min-w-0 flex-1 text-left space-y-1"
+                    >
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-xs font-extrabold text-slate-800 dark:text-white truncate">
                           {v.vehicle_label}
@@ -192,8 +203,23 @@ export function NotificationBell() {
                           </span>
                         )}
                       </p>
-                    </div>
-                  </button>
+                    </button>
+
+                    {!item.isRead && (
+                      <button
+                        type="button"
+                        disabled={markReadMutation.isPending}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          markReadMutation.mutate([item.refKey]);
+                        }}
+                        title="ทำเครื่องหมายว่าอ่านแล้ว"
+                        className="shrink-0 mt-0.5 px-2 py-1 rounded-lg border border-slate-200 dark:border-[#244737] text-[10px] font-bold text-slate-500 hover:text-emerald-700 hover:border-emerald-400 transition"
+                      >
+                        อ่านแล้ว
+                      </button>
+                    )}
+                  </div>
                 );
               })
             )}

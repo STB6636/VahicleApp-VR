@@ -117,7 +117,12 @@ export function groupCarsForReport(cars: VehicleEnrichedRow[]): CarReportGroup[]
     .map(([department, typeMap]) => ({
       department,
       types: Array.from(typeMap.entries())
-        .sort(([a], [b]) => a.localeCompare(b, 'th'))
+        .sort(([aName, aStatusMap], [bName, bStatusMap]) => {
+          const firstA = Array.from(aStatusMap.values())[0]?.[0]?.vehicle_type_sort_order ?? 9999;
+          const firstB = Array.from(bStatusMap.values())[0]?.[0]?.vehicle_type_sort_order ?? 9999;
+          if (firstA !== firstB) return firstA - firstB;
+          return aName.localeCompare(bName, 'th');
+        })
         .map(([vehicleTypeName, statusMap]) => ({
           vehicleTypeName,
           statuses: Array.from(statusMap.entries())

@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { vehicleService } from '@/services/vehicleService';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { QUERY_KEYS } from '@/lib/queryClient';
 import { ALL_VEHICLE_STATUS_ORDER, VEHICLE_STATUS_MAP } from '@/lib/vehicleStatus';
+import { formatCaretakerPositionLevel, formatVehicleCaretakerPositionLevel } from '@/lib/caretakerFormatter';
 import { VehicleStatusBadge } from '@/components/common/VehicleStatusBadge';
 import {
   computeNineStatusSummary,
@@ -33,17 +35,8 @@ export function ReportsPage() {
     queryFn: vehicleService.listVehicles,
   });
 
-  const { data: settings = [] } = useQuery({
-    queryKey: QUERY_KEYS.settings,
-    queryFn: vehicleService.listSettings,
-  });
-
-  const appDisplayName = useMemo(
-    () =>
-      settings.find((s) => s.key === 'app_display_name')?.value ||
-      'ระบบต่อภาษีและใบอนุญาตยานพาหนะราชการ',
-    [settings]
-  );
+  const { settings } = useAppSettings(true);
+  const appDisplayName = settings.appDisplayName;
 
   const departments = useMemo(() => {
     const set = new Set<string>();
@@ -68,7 +61,7 @@ export function ReportsPage() {
   const vesselGroups = useMemo(() => groupVesselsForReport(vessels), [vessels]);
 
   const reporterName = personnel?.full_name || user?.username || 'ผู้ใช้งาน';
-  const reporterPosition = personnel?.position_display || personnel?.position_name || '';
+  const reporterPosition = formatCaretakerPositionLevel(personnel);
   const departmentLabel = departmentFilter === 'all' ? 'สรุปทุกส่วนราชการ' : departmentFilter;
   const generatedDateTh = formatThaiDate(getTodayIsoBangkok(), 'long');
   const generatedTimeTh = formatThaiDateTime(new Date());
@@ -86,6 +79,9 @@ export function ReportsPage() {
         departmentLabel,
         reporterName,
         reporterPosition,
+        reportHeaderOrg: settings.reportHeaderOrg,
+        reportHeaderSub: settings.reportHeaderSub,
+        appDisplayName,
       });
       showToast(`ส่งออกไฟล์ ${fileName} เรียบร้อยแล้ว`, 'success');
     } catch (err) {
@@ -210,7 +206,8 @@ export function ReportsPage() {
             </div>
             <div>
               <p className="text-xs font-bold text-[#00744B] dark:text-emerald-400 print:text-[#00744B]">
-                สำนักเทศกิจ กรุงเทพมหานคร
+                {settings.reportHeaderOrg}
+                {settings.reportHeaderSub ? ` · ${settings.reportHeaderSub}` : ''}
               </p>
               <h1 className="text-lg font-extrabold text-slate-900 dark:text-white print:text-slate-900 leading-tight">
                 รายงานสถานะยานพาหนะราชการ
@@ -326,7 +323,14 @@ export function ReportsPage() {
                                         <td className="px-3 py-1.5 text-center">{idx + 1}</td>
                                         <td className="px-3 py-1.5 font-bold">{v.license_plate || '-'}</td>
                                         <td className="px-3 py-1.5">{v.province || '-'}</td>
-                                        <td className="px-3 py-1.5">{v.caretaker_name || '-'}</td>
+                                        <td className="px-3 py-1.5">
+                                          <span>{v.caretaker_name || '-'}</span>
+                                          {formatVehicleCaretakerPositionLevel(v) && (
+                                            <span className="block text-[10px] text-slate-500 print:text-slate-600">
+                                              {formatVehicleCaretakerPositionLevel(v)}
+                                            </span>
+                                          )}
+                                        </td>
                                         <td className="px-3 py-1.5 font-mono whitespace-nowrap">
                                           {formatThaiDate(v.current_expiry_date, 'numeric')}
                                         </td>

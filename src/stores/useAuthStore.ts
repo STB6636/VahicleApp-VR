@@ -11,6 +11,7 @@ export type PortalBlockReason =
   | 'DIRECT_ACCESS_BLOCKED'
   | 'SESSION_EXPIRED'
   | 'NO_APP_PERMISSION'
+  | 'USER_ROLE_NOT_SUPPORTED'
   | 'SSO_EXCHANGE_FAILED'
   | 'SIGNED_OUT';
 
@@ -106,13 +107,60 @@ export const useAuthStore = create<AuthState>((set) => ({
 }));
 
 export function isVehicleSuperAdmin(user: PortalSsoUser | null, perm: PortalAppPermission | null): boolean {
-  return user?.role === 'SUPERADMIN' || (perm?.hierarchy_level ?? 0) >= 90;
+  const code = String(perm?.role_code || '').toUpperCase();
+  return (
+    user?.role === 'SUPERADMIN' ||
+    (perm?.hierarchy_level ?? 0) >= 90 ||
+    code === 'SUPERADMIN' ||
+    code === 'APP_ADMIN'
+  );
 }
 
 export function isVehicleAdminOrAbove(user: PortalSsoUser | null, perm: PortalAppPermission | null): boolean {
+  const code = String(perm?.role_code || '').toUpperCase();
   return (
-    user?.role === 'SUPERADMIN' ||
+    isVehicleSuperAdmin(user, perm) ||
     user?.role === 'ADMIN' ||
-    (perm?.hierarchy_level ?? 0) >= 50
+    (perm?.hierarchy_level ?? 0) >= 50 ||
+    code === 'ADMIN' ||
+    code === 'FLEET_ADMIN'
   );
+}
+
+export function getVehicleRoleLabel(user: PortalSsoUser | null, perm: PortalAppPermission | null): string {
+  if (isVehicleSuperAdmin(user, perm)) return 'SuperAdmin';
+  if (isVehicleAdminOrAbove(user, perm)) {
+    if (user?.admin_scope?.scope_level_no === 2) return 'Admin (สำนักงาน/กอง)';
+    if (user?.admin_scope?.scope_level_no === 3) return 'Admin (ส่วน/ฝ่าย)';
+    return 'Admin';
+  }
+  return 'User';
+}
+
+export function getAdminScopeSummary(
+  user: PortalSsoUser | null,
+  perm: PortalAppPermission | null,
+  fallbackOrgName?: string | null
+): { levelLabel: string; orgName: string; isUnassignedAdmin: boolean } {
+  if (isVehicleSuperAdmin(user, perm)) {
+    return { levelLabel: 'มุมมองทุกส่วนราชการ', orgName: 'ทั้งหน่วยงาน', isUnassignedAdmin: false };
+  }
+  if (user?.role === 'ADMIN') {
+    if (user.admin_scope) {
+      const levelLabel =
+        user.admin_scope.scope_level_no === 2 ? 'มุมมองสำนักงาน/กอง (Lv2)' : 'มุมมองส่วน/ฝ่าย (Lv3)';
+      const orgName = user.admin_scope.org_unit_name || fallbackOrgName || 'ตามขอบเขตที่ได้รับมอบหมาย';
+      return { levelLabel, orgName, isUnassignedAdmin: false };
+    }
+    return {
+      levelLabel: 'ยังไม่ได้กำหนดขอบเขต Admin',
+      orgName: 'กรุณาติดต่อผู้ดูแลระบบ Portal SSO เพื่อกำหนดขอบเขตสังกัด',
+      isUnassignedAdmin: true,
+    };
+  }
+  return {
+    levelLabel: 'มุมมองส่วน/ฝ่าย',
+    orgName: fallbackOrgName || 'สังกัดของท่าน',
+    isUnassignedAdmin: false,
+  };
 }

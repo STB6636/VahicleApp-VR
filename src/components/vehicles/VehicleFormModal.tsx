@@ -6,16 +6,18 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ResponsiveModal } from '@/components/common/ResponsiveModal';
 import { ThaiDatePicker, focusInvalidThaiDateInput } from '@/components/common/ThaiDatePicker';
 import { SmartCaretakerCombobox } from '@/components/common/SmartCaretakerCombobox';
+import { VehicleStatusBadge } from '@/components/common/VehicleStatusBadge';
 import { vehicleService } from '@/services/vehicleService';
 import { portalDirectoryService } from '@/services/portalDirectoryService';
-import { clampMaxFileMb, driveBridgeService, validateAttachmentFile } from '@/services/driveBridgeService';
+import { driveBridgeService, validateAttachmentFile } from '@/services/driveBridgeService';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { QUERY_KEYS } from '@/lib/queryClient';
 import {
-  ALL_VEHICLE_STATUS_ORDER,
   TERMINAL_STATUS_CODES,
   VEHICLE_STATUS_MAP,
   computeVehicleStatus,
 } from '@/lib/vehicleStatus';
+import { formatVehicleCaretakerPositionLevel } from '@/lib/caretakerFormatter';
 import { useAuthStore, isVehicleSuperAdmin } from '@/stores/useAuthStore';
 import { useUiStore } from '@/stores/useUiStore';
 import type {
@@ -23,6 +25,48 @@ import type {
   VehicleStatusCode,
   VehicleTypeRow,
 } from '@/types/vehicle.types';
+
+type BaseOperationalStatus = 'NORMAL' | 'MAINTENANCE' | 'DECOMMISSIONED' | 'DISPOSED';
+
+const OPERATIONAL_STATUS_OPTIONS: Array<{
+  code: BaseOperationalStatus;
+  labelTh: string;
+  hint: string;
+}> = [
+  {
+    code: 'NORMAL',
+    labelTh: 'ใช้งานปกติ (คำนวณ ปกติ / กำลังหมดอายุ / ขาดต่ออายุ อัตโนมัติ)',
+    hint: 'ระบบจะคำนวณเป็น ปกติ, กำลังจะขาดต่ออายุ หรือ ขาดต่ออายุ ตามวันสิ้นอายุโดยอัตโนมัติ',
+  },
+  {
+    code: 'MAINTENANCE',
+    labelTh: 'อยู่ระหว่างซ่อมบำรุง (คำนวณควบคู่กับวันสิ้นอายุอัตโนมัติ)',
+    hint: 'ระบบจะแสดงสถานะซ่อมบำรุงควบคู่กับการเตือนวันหมดอายุ และคงคิวติดตามไว้',
+  },
+  {
+    code: 'DECOMMISSIONED',
+    labelTh: 'ยุบสภาพรอจำหน่าย (หยุดแจ้งเตือนวันหมดอายุ)',
+    hint: 'สถานะสิ้นสุด — หยุดนับเข้าคิวติดตามและการแจ้งเตือนวันหมดอายุ',
+  },
+  {
+    code: 'DISPOSED',
+    labelTh: 'จำหน่าย (หยุดแจ้งเตือนถาวร · บังคับกรอกวันที่จำหน่าย)',
+    hint: 'สถานะสิ้นสุดถาวร — เฉพาะ SuperAdmin เท่านั้นที่สามารถคืนสถานะกลับได้',
+  },
+];
+
+function toBaseOperationalStatus(code: VehicleStatusCode): BaseOperationalStatus {
+  if (code === 'DISPOSED') return 'DISPOSED';
+  if (code === 'DECOMMISSIONED') return 'DECOMMISSIONED';
+  if (
+    code === 'MAINTENANCE' ||
+    code === 'MAINTENANCE_WARNING' ||
+    code === 'MAINTENANCE_EXPIRED'
+  ) {
+    return 'MAINTENANCE';
+  }
+  return 'NORMAL';
+}
 
 const vehicleFormSchema = z.object({
   vehicle_type_id: z.string().min(1, 'กรุณาเลือกประเภทยานพาหนะ'),
@@ -42,16 +86,7 @@ const vehicleFormSchema = z.object({
   department_id: z.string().optional(),
   division_id: z.string().optional(),
   caretaker_personnel_id: z.string().nullable().optional(),
-  status_code: z.enum([
-    'NORMAL',
-    'WARNING',
-    'EXPIRED',
-    'MAINTENANCE',
-    'MAINTENANCE_WARNING',
-    'MAINTENANCE_EXPIRED',
-    'DECOMMISSIONED',
-    'DISPOSED',
-  ]),
+  status_code: z.enum(['NORMAL', 'MAINTENANCE', 'DECOMMISSIONED', 'DISPOSED']),
   remarks: z.string().optional(),
 });
 
@@ -85,6 +120,13 @@ export function VehicleFormModal({
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const { settings } = useAppSettings(open);
+  const warningDays = settings.warningDaysBefore;
+  const maxFileMb = settings.maxFileMb;
+  const driveBridgeUrl = settings.gasDriveBridgeUrl;
+  const vesselFolderId = settings.vesselLicenseFolderId;
+  const canUploadVesselFile = Boolean(driveBridgeUrl && vesselFolderId);
+
   const { data: orgUnits = [], isLoading: loadingOrgUnits } = useQuery({
     queryKey: QUERY_KEYS.portalOrgUnits,
     queryFn: portalDirectoryService.listOrgUnits,
@@ -92,33 +134,12 @@ export function VehicleFormModal({
     staleTime: 5 * 60_000,
   });
 
-  const { data: directoryPersonnel = [], isLoading: loadingPersonnel } = useQuery({
-    queryKey: QUERY_KEYS.portalPersonnel,
-    queryFn: portalDirectoryService.listPersonnel,
-    enabled: open,
-    staleTime: 5 * 60_000,
-  });
-
-  const { data: settings = [] } = useQuery({
-    queryKey: QUERY_KEYS.settings,
-    queryFn: vehicleService.listSettings,
-    enabled: open,
-  });
-
-  const settingsMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const s of settings) map[s.key] = s.value;
-    return map;
-  }, [settings]);
-
-  const warningDays = Number(settingsMap.warning_days_before || 45) || 45;
-  const maxFileMb = clampMaxFileMb(settingsMap.max_file_mb, 10);
-  const driveBridgeUrl = (settingsMap.gas_drive_bridge_url || '').trim();
-  const vesselFolderId = (settingsMap.vessel_license_folder_id || '').trim();
-  const canUploadVesselFile = Boolean(driveBridgeUrl && vesselFolderId);
-
   const defaultTypeId = useMemo(
-    () => vehicleTypes.find((t) => t.code === 'CAR')?.id ?? vehicleTypes[0]?.id ?? '',
+    () =>
+      vehicleTypes.find((t) => t.is_default)?.id ??
+      vehicleTypes.find((t) => t.code === 'CAR')?.id ??
+      vehicleTypes[0]?.id ??
+      '',
     [vehicleTypes]
   );
 
@@ -139,6 +160,47 @@ export function VehicleFormModal({
     },
   });
 
+  const watchedTypeId = watch('vehicle_type_id');
+  const watchedOfficeId = watch('office_id');
+  const watchedDeptId = watch('department_id');
+  const watchedStatus = watch('status_code');
+  const watchedExpiry = watch('current_expiry_date');
+
+  // Scoped Org Units hierarchy (Lv2 สำนักงาน/กอง -> Lv3 ส่วน/ฝ่าย -> Lv4 กลุ่มงาน)
+  const isUnassignedAdmin = Boolean(!isSuper && user?.role === 'ADMIN' && !user.admin_scope);
+
+  const scopedDeptId = useMemo(() => {
+    if (isSuper) return null;
+    if (user?.role === 'ADMIN' && user.admin_scope?.scope_level_no === 3) {
+      return user.admin_scope.org_unit_id;
+    }
+    if (user?.role !== 'ADMIN' && personnel?.department_id) {
+      return personnel.department_id;
+    }
+    return null;
+  }, [isSuper, user, personnel]);
+
+  const scopedOfficeId = useMemo(() => {
+    if (isSuper) return null;
+    if (user?.role === 'ADMIN' && user.admin_scope?.scope_level_no === 2) {
+      return user.admin_scope.org_unit_id;
+    }
+    if (user?.role === 'ADMIN' && user.admin_scope?.scope_level_no === 3) {
+      if (user.admin_scope.parent_office_id) return user.admin_scope.parent_office_id;
+    }
+    if (scopedDeptId) {
+      const deptNode = orgUnits.find((u) => u.id === scopedDeptId);
+      if (deptNode?.parent_id) return deptNode.parent_id;
+    }
+    if (user?.role !== 'ADMIN' && personnel?.office_id) {
+      return personnel.office_id;
+    }
+    return null;
+  }, [isSuper, user, personnel, scopedDeptId, orgUnits]);
+
+  const isOfficeLocked = Boolean(!isSuper && scopedOfficeId);
+  const isDeptLocked = Boolean(!isSuper && scopedDeptId);
+
   const wasOpenRef = useRef(false);
 
   useEffect(() => {
@@ -155,6 +217,7 @@ export function VehicleFormModal({
 
     if (editingVehicle) {
       setUseCaretaker(Boolean(editingVehicle.caretaker_personnel_id));
+      const freshStatus = editingVehicle.computed_status_code || editingVehicle.status_code;
       reset({
         vehicle_type_id: editingVehicle.vehicle_type_id,
         license_plate: editingVehicle.license_plate || '',
@@ -173,23 +236,32 @@ export function VehicleFormModal({
         department_id: editingVehicle.department_id || '',
         division_id: editingVehicle.division_id || '',
         caretaker_personnel_id: editingVehicle.caretaker_personnel_id || null,
-        status_code: editingVehicle.status_code,
+        status_code: toBaseOperationalStatus(freshStatus),
         remarks: editingVehicle.remarks || '',
       });
     } else {
       setUseCaretaker(false);
       const defaultOfficeId =
-        user?.admin_scope?.scope_level_no === 2
+        scopedOfficeId ||
+        (user?.admin_scope?.scope_level_no === 2
           ? user.admin_scope.org_unit_id
-          : personnel?.office_id || '';
+          : personnel?.office_id || '');
+
+      // Only prefill personnel.department_id if it belongs to defaultOfficeId
+      const personnelDeptMatchesOffice =
+        !defaultOfficeId || !personnel?.office_id || personnel.office_id === defaultOfficeId;
       const defaultDeptId =
-        user?.admin_scope?.scope_level_no === 3
+        scopedDeptId ||
+        (user?.admin_scope?.scope_level_no === 3
           ? user.admin_scope.org_unit_id
-          : personnel?.department_id || '';
+          : personnelDeptMatchesOffice
+            ? personnel?.department_id || ''
+            : '');
+
       reset({
         vehicle_type_id: defaultTypeId,
         license_plate: '',
-        province: 'กรุงเทพมหานคร',
+        province: settings.defaultProvince,
         vessel_name: '',
         vessel_license_no: '',
         brand: '',
@@ -208,54 +280,24 @@ export function VehicleFormModal({
         remarks: '',
       });
     }
-  }, [open, editingVehicle, defaultTypeId, personnel, user, reset]);
+  }, [
+    open,
+    editingVehicle,
+    defaultTypeId,
+    personnel,
+    user,
+    scopedOfficeId,
+    scopedDeptId,
+    settings.defaultProvince,
+    reset,
+  ]);
 
-  const watchedTypeId = watch('vehicle_type_id');
-  const watchedOfficeId = watch('office_id');
-  const watchedDeptId = watch('department_id');
-  const watchedStatus = watch('status_code');
-  const watchedExpiry = watch('current_expiry_date');
-
-  // If vehicleTypes loads asynchronously after modal opens for a new vehicle, backfill defaultTypeId
+  // Backfill defaultTypeId if vehicleTypes loads asynchronously
   useEffect(() => {
     if (open && !editingVehicle && !watchedTypeId && defaultTypeId) {
       setValue('vehicle_type_id', defaultTypeId);
     }
   }, [open, editingVehicle, watchedTypeId, defaultTypeId, setValue]);
-
-  const selectedType = useMemo(
-    () => vehicleTypes.find((t) => t.id === watchedTypeId) ?? null,
-    [vehicleTypes, watchedTypeId]
-  );
-  const isVessel = Boolean(selectedType?.is_vessel);
-
-  // Scoped Org Units hierarchy (Lv2 Office -> Lv3 Department -> Lv4 Division)
-  // Mirrors PostgreSQL `vehicleapp.fn_can_access_vehicle` for Portal ADMIN (Lv2/Lv3) & App FLEET_ADMIN.
-  const scopedDeptId = useMemo(() => {
-    if (isSuper) return null;
-    if (user?.role === 'ADMIN' && user.admin_scope?.scope_level_no === 3) {
-      return user.admin_scope.org_unit_id;
-    }
-    if (user?.role !== 'ADMIN' && personnel?.department_id) {
-      return personnel.department_id;
-    }
-    return null;
-  }, [isSuper, user, personnel]);
-
-  const scopedOfficeId = useMemo(() => {
-    if (isSuper) return null;
-    if (user?.role === 'ADMIN' && user.admin_scope?.scope_level_no === 2) {
-      return user.admin_scope.org_unit_id;
-    }
-    if (scopedDeptId) {
-      const deptNode = orgUnits.find((u) => u.id === scopedDeptId);
-      if (deptNode?.parent_id) return deptNode.parent_id;
-    }
-    if (user?.role !== 'ADMIN' && personnel?.office_id) {
-      return personnel.office_id;
-    }
-    return null;
-  }, [isSuper, user, personnel, scopedDeptId, orgUnits]);
 
   // Auto-sync parent office_id for Lv3 scoped admin once orgUnits loads
   useEffect(() => {
@@ -263,6 +305,12 @@ export function VehicleFormModal({
       setValue('office_id', scopedOfficeId);
     }
   }, [open, editingVehicle, scopedOfficeId, watchedOfficeId, setValue]);
+
+  const selectedType = useMemo(
+    () => vehicleTypes.find((t) => t.id === watchedTypeId) ?? null,
+    [vehicleTypes, watchedTypeId]
+  );
+  const isVessel = Boolean(selectedType?.is_vessel);
 
   const offices = useMemo(() => {
     const lv2 = orgUnits.filter((u) => u.level_no === 2);
@@ -288,16 +336,57 @@ export function VehicleFormModal({
     return orgUnits.filter((u) => u.level_no === 4 && u.parent_id === watchedDeptId);
   }, [orgUnits, watchedDeptId]);
 
-  // Terminal-state guard: only SUPERADMIN / APP_ADMIN (>= 90) may restore DISPOSED/DECOMMISSIONED
-  const allowedStatusOptions = useMemo<VehicleStatusCode[]>(() => {
-    if (isSuper || !editingVehicle) return ALL_VEHICLE_STATUS_ORDER;
+  // Caretaker requirement: require Lv3 (ส่วน/ฝ่าย) unless selected Lv2 office has 0 Lv3 children
+  const officeHasNoDepts = Boolean(watchedOfficeId && !loadingOrgUnits && departments.length === 0);
+  const canSelectCaretaker = Boolean(watchedDeptId || officeHasNoDepts);
+  const caretakerQueryOfficeId = watchedDeptId ? null : officeHasNoDepts ? watchedOfficeId : null;
+  const caretakerQueryDeptId = watchedDeptId || null;
+
+  // PDPA-safe RPC caretaker candidates (no 500-row limit, works for SuperAdmin & Admin Lv2/Lv3)
+  const {
+    data: caretakerCandidates = [],
+    isLoading: loadingPersonnel,
+    error: caretakerError,
+    refetch: refetchCaretakers,
+  } = useQuery({
+    queryKey: QUERY_KEYS.caretakerCandidates(caretakerQueryOfficeId, caretakerQueryDeptId),
+    queryFn: () =>
+      vehicleService.listCaretakerCandidates({
+        officeId: caretakerQueryOfficeId,
+        departmentId: caretakerQueryDeptId,
+      }),
+    enabled: open && useCaretaker && canSelectCaretaker,
+    staleTime: 2 * 60_000,
+  });
+
+  const selectedOrgLabel = useMemo(() => {
+    if (watchedDeptId) {
+      return orgUnits.find((u) => u.id === watchedDeptId)?.name_th || editingVehicle?.department_name || 'ส่วน/ฝ่ายที่เลือก';
+    }
+    if (watchedOfficeId) {
+      return orgUnits.find((u) => u.id === watchedOfficeId)?.name_th || editingVehicle?.office_name || 'สำนักงานที่เลือก';
+    }
+    return 'ส่วนราชการที่เลือก';
+  }, [watchedDeptId, watchedOfficeId, orgUnits, editingVehicle]);
+
+  const editingCaretakerFallback = useMemo(() => {
+    if (!editingVehicle?.caretaker_name) return null;
+    const pos = formatVehicleCaretakerPositionLevel(editingVehicle);
+    return pos ? `${editingVehicle.caretaker_name}, ${pos}` : editingVehicle.caretaker_name;
+  }, [editingVehicle]);
+
+  // Terminal-state guard: only SuperAdmin may restore DISPOSED / DECOMMISSIONED
+  const allowedOperationalOptions = useMemo(() => {
+    if (isSuper || !editingVehicle) return OPERATIONAL_STATUS_OPTIONS;
     if (editingVehicle.status_code === 'DISPOSED') {
-      return ['DISPOSED'];
+      return OPERATIONAL_STATUS_OPTIONS.filter((o) => o.code === 'DISPOSED');
     }
     if (editingVehicle.status_code === 'DECOMMISSIONED') {
-      return ['DECOMMISSIONED', 'DISPOSED'];
+      return OPERATIONAL_STATUS_OPTIONS.filter(
+        (o) => o.code === 'DECOMMISSIONED' || o.code === 'DISPOSED'
+      );
     }
-    return ALL_VEHICLE_STATUS_ORDER;
+    return OPERATIONAL_STATUS_OPTIONS;
   }, [isSuper, editingVehicle]);
 
   const isStatusTerminalLocked = Boolean(
@@ -305,10 +394,7 @@ export function VehicleFormModal({
   );
 
   const effectivePreviewStatus = useMemo<VehicleStatusCode>(() => {
-    const isMaint =
-      watchedStatus === 'MAINTENANCE' ||
-      watchedStatus === 'MAINTENANCE_WARNING' ||
-      watchedStatus === 'MAINTENANCE_EXPIRED';
+    const isMaint = watchedStatus === 'MAINTENANCE';
     return computeVehicleStatus({
       expiryDateIso: watchedExpiry,
       isUnderMaintenance: isMaint,
@@ -319,6 +405,11 @@ export function VehicleFormModal({
 
   const onSubmit = async (values: VehicleFormValues) => {
     setFormError(null);
+
+    if (isUnassignedAdmin) {
+      setFormError('บัญชี Admin ของท่านยังไม่ได้กำหนดขอบเขตสังกัดใน Portal SSO กรุณาติดต่อ SuperAdmin');
+      return;
+    }
 
     if (focusInvalidThaiDateInput(document.getElementById('vehicle-form-root'))) {
       setFormError('กรุณาตรวจสอบรูปแบบวันที่ พ.ศ. ให้ถูกต้อง');
@@ -341,11 +432,12 @@ export function VehicleFormModal({
     }
 
     if (!isSuper && editingVehicle && TERMINAL_STATUS_CODES.has(editingVehicle.status_code)) {
-      const allowedNext = editingVehicle.status_code === 'DECOMMISSIONED'
-        ? ['DECOMMISSIONED', 'DISPOSED']
-        : ['DISPOSED'];
+      const allowedNext: BaseOperationalStatus[] =
+        editingVehicle.status_code === 'DECOMMISSIONED'
+          ? ['DECOMMISSIONED', 'DISPOSED']
+          : ['DISPOSED'];
       if (!allowedNext.includes(values.status_code)) {
-        setFormError('เฉพาะผู้ดูแลระบบสูงสุด (SUPERADMIN / APP_ADMIN) เท่านั้นที่สามารถคืนสถานะจากยุบสภาพหรือจำหน่ายได้');
+        setFormError('เฉพาะผู้ดูแลระบบสูงสุด (SuperAdmin) เท่านั้นที่สามารถคืนสถานะจากยุบสภาพหรือจำหน่ายได้');
         return;
       }
     }
@@ -373,31 +465,16 @@ export function VehicleFormModal({
       return;
     }
 
+    // Ensure office_id is populated when a Lv3 department is chosen
+    let resolvedOfficeId = values.office_id || null;
+    if (!resolvedOfficeId && values.department_id) {
+      const deptNode = orgUnits.find((u) => u.id === values.department_id);
+      if (deptNode?.parent_id) resolvedOfficeId = deptNode.parent_id;
+    }
+
     setSubmitting(true);
     try {
-      let attachmentFolderId = editingVehicle?.attachment_folder_id ?? null;
-      let latestFileUrl = editingVehicle?.latest_file_url ?? null;
-
-      if (isVessel && vesselFile) {
-        const uploadRes = await driveBridgeService.uploadFile({
-          bridgeUrl: driveBridgeUrl,
-          folderIdOrUrl: vesselFolderId,
-          vehicleCode: editingVehicle?.vehicle_code || 'NEW-VESSEL',
-          vehicleLabel: values.vessel_name?.trim() || 'vessel',
-          existingFolderId: attachmentFolderId,
-          targetType: 'vessel_license',
-          file: vesselFile,
-          maxFileMb,
-        });
-        attachmentFolderId = uploadRes.folderId;
-        latestFileUrl = uploadRes.url;
-      }
-
-      const isMaint =
-        values.status_code === 'MAINTENANCE' ||
-        values.status_code === 'MAINTENANCE_WARNING' ||
-        values.status_code === 'MAINTENANCE_EXPIRED';
-
+      const isMaint = values.status_code === 'MAINTENANCE';
       const computedStatus = computeVehicleStatus({
         expiryDateIso: values.current_expiry_date,
         isUnderMaintenance: isMaint,
@@ -405,7 +482,7 @@ export function VehicleFormModal({
         warningDays,
       });
 
-      const payload = {
+      const basePayload = {
         vehicle_type_id: values.vehicle_type_id,
         license_plate: isVessel ? null : values.license_plate?.trim() || null,
         province: isVessel ? null : values.province?.trim() || null,
@@ -419,23 +496,77 @@ export function VehicleFormModal({
         acquisition_date: values.acquisition_date || null,
         disposal_date: values.status_code === 'DISPOSED' ? values.disposal_date || null : null,
         current_expiry_date: values.current_expiry_date,
-        office_id: values.office_id || null,
+        office_id: resolvedOfficeId,
         department_id: values.department_id || null,
         division_id: values.division_id || null,
         caretaker_personnel_id: useCaretaker ? values.caretaker_personnel_id || null : null,
         status_code: computedStatus,
         is_under_maintenance: isMaint,
-        attachment_folder_id: attachmentFolderId,
-        latest_file_url: latestFileUrl,
+        attachment_folder_id: editingVehicle?.attachment_folder_id ?? null,
+        latest_file_url: editingVehicle?.latest_file_url ?? null,
         remarks: values.remarks?.trim() || null,
       };
 
       if (editingVehicle) {
-        await vehicleService.updateVehicle(editingVehicle.id, payload);
+        let attachmentFolderId = editingVehicle.attachment_folder_id ?? null;
+        let latestFileUrl = editingVehicle.latest_file_url ?? null;
+
+        if (isVessel && vesselFile) {
+          const uploadRes = await driveBridgeService.uploadFile({
+            bridgeUrl: driveBridgeUrl,
+            folderIdOrUrl: vesselFolderId,
+            vehicleCode: editingVehicle.vehicle_code,
+            vehicleLabel: values.vessel_name?.trim() || 'vessel',
+            existingFolderId: attachmentFolderId,
+            targetType: 'vessel_license',
+            file: vesselFile,
+            maxFileMb,
+          });
+          attachmentFolderId = uploadRes.folderId;
+          latestFileUrl = uploadRes.url;
+        }
+
+        await vehicleService.updateVehicle(editingVehicle.id, {
+          ...basePayload,
+          attachment_folder_id: attachmentFolderId,
+          latest_file_url: latestFileUrl,
+        });
         showToast('บันทึกการแก้ไขข้อมูลยานพาหนะเรียบร้อยแล้ว', 'success');
       } else {
-        await vehicleService.createVehicle(payload);
-        showToast('เพิ่มข้อมูลยานพาหนะใหม่เรียบร้อยแล้ว', 'success');
+        // Create vehicle first to obtain real `VHxxxx` code (prevents `NEW-VESSEL` folder & orphan files)
+        const created = await vehicleService.createVehicle(basePayload);
+
+        if (isVessel && vesselFile) {
+          try {
+            const uploadRes = await driveBridgeService.uploadFile({
+              bridgeUrl: driveBridgeUrl,
+              folderIdOrUrl: vesselFolderId,
+              vehicleCode: created.vehicle_code,
+              vehicleLabel: values.vessel_name?.trim() || 'vessel',
+              existingFolderId: null,
+              targetType: 'vessel_license',
+              file: vesselFile,
+              maxFileMb,
+            });
+            await vehicleService.updateVehicleAttachment(created.id, {
+              attachment_folder_id: uploadRes.folderId,
+              latest_file_url: uploadRes.url,
+            });
+          } catch (uploadErr) {
+            showToast(
+              `บันทึกเรือ ${created.vehicle_code} แล้ว แต่อัปโหลดไฟล์ใบอนุญาตไม่สำเร็จ: ${
+                uploadErr instanceof Error ? uploadErr.message : 'กรุณาแนบใหม่ในหน้าแก้ไข'
+              }`,
+              'warning'
+            );
+            await qc.invalidateQueries({ queryKey: QUERY_KEYS.vehicles });
+            await qc.invalidateQueries({ queryKey: QUERY_KEYS.schemaHealth });
+            onClose();
+            return;
+          }
+        }
+
+        showToast(`เพิ่มข้อมูลยานพาหนะ ${created.vehicle_code} เรียบร้อยแล้ว`, 'success');
       }
 
       await qc.invalidateQueries({ queryKey: QUERY_KEYS.vehicles });
@@ -465,7 +596,7 @@ export function VehicleFormModal({
           <button
             type="submit"
             form="vehicle-form-root"
-            disabled={submitting}
+            disabled={submitting || isUnassignedAdmin}
             className="bma-btn-primary"
           >
             <i className={`fa-solid ${submitting ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}`} />
@@ -475,6 +606,15 @@ export function VehicleFormModal({
       }
     >
       <form id="vehicle-form-root" onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+        {isUnassignedAdmin && (
+          <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2.5">
+            <i className="fa-solid fa-triangle-exclamation mt-0.5" />
+            <span>
+              บัญชี <strong>Admin</strong> ของท่านยังไม่ได้รับการกำหนดขอบเขตสังกัด (สำนักงาน/กอง หรือ ส่วน/ฝ่าย) ในระบบ Portal SSO-VR จึงยังไม่สามารถบันทึกข้อมูลยานพาหนะได้
+            </span>
+          </div>
+        )}
+
         {formError && (
           <div className="rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-4 py-3 text-xs text-rose-700 dark:text-rose-200 flex items-start gap-2.5">
             <i className="fa-solid fa-circle-exclamation mt-0.5" />
@@ -492,7 +632,21 @@ export function VehicleFormModal({
               render={({ field }) => (
                 <select
                   value={field.value || ''}
-                  onChange={(e) => field.onChange(e.target.value)}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    const prevType = vehicleTypes.find((t) => t.id === field.value);
+                    const nextType = vehicleTypes.find((t) => t.id === nextId);
+                    field.onChange(nextId);
+                    if (
+                      prevType &&
+                      nextType &&
+                      (prevType.is_vessel !== nextType.is_vessel ||
+                        prevType.default_caretaker_position !== nextType.default_caretaker_position)
+                    ) {
+                      setValue('caretaker_personnel_id', null);
+                      setShowAllInOrg(false);
+                    }
+                  }}
                   className="bma-input"
                 >
                   {vehicleTypes.map((vt) => (
@@ -591,7 +745,8 @@ export function VehicleFormModal({
               ) : (
                 <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
                   <i className="fa-solid fa-circle-info mr-1.5" />
-                  ยังไม่ได้ตั้งค่า <code>gas_drive_bridge_url</code> และ <code>vessel_license_folder_id</code> ในหน้าตั้งค่าระบบ (สามารถบันทึกข้อมูลเรือได้โดยไม่ต้องแนบไฟล์)
+                  ยังไม่ได้ตั้งค่าลิงก์ Google Apps Script Web App (<code>/exec</code>) และโฟลเดอร์ใบอนุญาตเรือในแท็บ{' '}
+                  <strong>ตั้งค่าระบบ → Google Drive Bridge</strong> (สามารถบันทึกข้อมูลเรือได้โดยไม่ต้องแนบไฟล์)
                 </div>
               )}
             </div>
@@ -616,11 +771,20 @@ export function VehicleFormModal({
                 <input
                   {...register('province')}
                   list="vehicle-province-options"
-                  placeholder="กรุงเทพมหานคร"
+                  placeholder={settings.defaultProvince}
                   className="bma-input"
                 />
                 <datalist id="vehicle-province-options">
-                  {Array.from(new Set(['กรุงเทพมหานคร', 'นนทบุรี', 'ปทุมธานี', 'สมุทรปราการ', ...existingProvinces]))
+                  {Array.from(
+                    new Set([
+                      settings.defaultProvince,
+                      'กรุงเทพมหานคร',
+                      'นนทบุรี',
+                      'ปทุมธานี',
+                      'สมุทรปราการ',
+                      ...existingProvinces,
+                    ])
+                  )
                     .sort()
                     .map((prov) => (
                       <option key={prov} value={prov} />
@@ -673,7 +837,10 @@ export function VehicleFormModal({
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
             <div>
-              <label className="bma-label">สำนักงาน (Lv2)</label>
+              <label className="bma-label">
+                สำนักงาน / กอง (Lv2)
+                {isOfficeLocked && <i className="fa-solid fa-lock text-[10px] ml-1.5 text-amber-500" title="ล็อกตามขอบเขตสิทธิ์" />}
+              </label>
               <Controller
                 name="office_id"
                 control={control}
@@ -684,6 +851,7 @@ export function VehicleFormModal({
                     <select
                       aria-label="สำนักงาน (Lv2)"
                       value={val}
+                      disabled={isOfficeLocked}
                       onChange={(e) => {
                         field.onChange(e.target.value);
                         setValue('department_id', '');
@@ -692,12 +860,12 @@ export function VehicleFormModal({
                       }}
                       className="bma-input"
                     >
-                      <option value="">-- เลือกสำนักงาน --</option>
+                      {!isOfficeLocked && <option value="">-- เลือกสำนักงาน --</option>}
                       {missingSelected && (
                         <option value={val}>
                           {editingVehicle?.office_id === val
                             ? editingVehicle.office_name || val
-                            : val}
+                            : user?.admin_scope?.org_unit_name || val}
                         </option>
                       )}
                       {offices.map((o) => (
@@ -712,7 +880,10 @@ export function VehicleFormModal({
             </div>
 
             <div>
-              <label className="bma-label">ฝ่าย / ส่วน (Lv3)</label>
+              <label className="bma-label">
+                ฝ่าย / ส่วน (Lv3)
+                {isDeptLocked && <i className="fa-solid fa-lock text-[10px] ml-1.5 text-amber-500" title="ล็อกตามขอบเขตสิทธิ์" />}
+              </label>
               <Controller
                 name="department_id"
                 control={control}
@@ -723,19 +894,27 @@ export function VehicleFormModal({
                     <select
                       aria-label="ฝ่าย / ส่วน (Lv3)"
                       value={val}
+                      disabled={isDeptLocked}
                       onChange={(e) => {
-                        field.onChange(e.target.value);
+                        const nextDeptId = e.target.value;
+                        field.onChange(nextDeptId);
+                        if (nextDeptId && !watchedOfficeId) {
+                          const deptNode = orgUnits.find((u) => u.id === nextDeptId);
+                          if (deptNode?.parent_id) {
+                            setValue('office_id', deptNode.parent_id);
+                          }
+                        }
                         setValue('division_id', '');
                         setValue('caretaker_personnel_id', null);
                       }}
                       className="bma-input"
                     >
-                      <option value="">-- เลือกฝ่าย / ส่วน --</option>
+                      {!isDeptLocked && <option value="">-- เลือกฝ่าย / ส่วน --</option>}
                       {missingSelected && (
                         <option value={val}>
                           {editingVehicle?.department_id === val
                             ? editingVehicle.department_name || val
-                            : val}
+                            : user?.admin_scope?.org_unit_name || val}
                         </option>
                       )}
                       {departments.map((d) => (
@@ -786,41 +965,57 @@ export function VehicleFormModal({
           </div>
 
           <div className="pt-2 border-t border-slate-100 dark:border-[#244737] space-y-3">
-            <label className="inline-flex items-center gap-2.5 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={useCaretaker}
-                onChange={(e) => {
-                  const checked = e.target.checked;
-                  setUseCaretaker(checked);
-                  if (!checked) {
-                    setValue('caretaker_personnel_id', null);
-                    setShowAllInOrg(false);
-                  }
-                }}
-                className="rounded border-slate-300 text-[#00744B] focus:ring-emerald-500 w-4 h-4"
-              />
-              <span className="text-xs font-bold text-slate-700 dark:text-slate-200">
-                ระบุตัวบุคคลผู้ดูแลยานพาหนะ (Smart Caretaker Filter)
-              </span>
-            </label>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label
+                className={`inline-flex items-center gap-2.5 select-none ${
+                  canSelectCaretaker ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={useCaretaker}
+                  disabled={!canSelectCaretaker}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setUseCaretaker(checked);
+                    if (!checked) {
+                      setValue('caretaker_personnel_id', null);
+                      setShowAllInOrg(false);
+                    }
+                  }}
+                  className="rounded border-slate-300 text-[#00744B] focus:ring-emerald-500 w-4 h-4"
+                />
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                  ระบุตัวบุคคลผู้ดูแลยานพาหนะ (Smart Caretaker Filter)
+                </span>
+              </label>
 
-            {useCaretaker && (
+              {!canSelectCaretaker && (
+                <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">
+                  กรุณาเลือก ฝ่าย / ส่วน (Lv3) ก่อนระบุผู้ดูแล
+                </span>
+              )}
+            </div>
+
+            {useCaretaker && canSelectCaretaker && (
               <Controller
                 name="caretaker_personnel_id"
                 control={control}
                 render={({ field }) => (
                   <SmartCaretakerCombobox
-                    personnel={directoryPersonnel}
+                    personnel={caretakerCandidates}
                     value={field.value ?? null}
                     onChange={field.onChange}
-                    officeId={watchedOfficeId}
-                    departmentId={watchedDeptId}
+                    officeId={caretakerQueryOfficeId}
+                    departmentId={caretakerQueryDeptId}
                     defaultPosition={selectedType?.default_caretaker_position}
                     showAllInOrg={showAllInOrg}
                     onToggleShowAll={setShowAllInOrg}
                     loading={loadingPersonnel}
-                    fallbackLabel={editingVehicle?.caretaker_name}
+                    errorMessage={caretakerError instanceof Error ? caretakerError.message : null}
+                    onRetry={() => void refetchCaretakers()}
+                    fallbackLabel={editingCaretakerFallback}
+                    selectedOrgName={selectedOrgLabel}
                   />
                 )}
               />
@@ -828,10 +1023,10 @@ export function VehicleFormModal({
           </div>
         </div>
 
-        {/* Section 3: Status, Disposal Date & Remarks */}
+        {/* Section 3: Operational Status (4 Modes) + Live Computed 8-Status Preview */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="bma-label">สถานะยานพาหนะ</label>
+          <div className="space-y-2">
+            <label className="bma-label">สถานะการปฏิบัติงานของยานพาหนะ</label>
             <Controller
               name="status_code"
               control={control}
@@ -839,28 +1034,30 @@ export function VehicleFormModal({
                 <select
                   aria-label="สถานะยานพาหนะ"
                   value={field.value}
-                  onChange={(e) => field.onChange(e.target.value as VehicleStatusCode)}
-                  disabled={allowedStatusOptions.length <= 1}
+                  onChange={(e) => field.onChange(e.target.value as BaseOperationalStatus)}
+                  disabled={allowedOperationalOptions.length <= 1}
                   className="bma-input"
                 >
-                  {allowedStatusOptions.map((code) => (
-                    <option key={code} value={code}>
-                      {VEHICLE_STATUS_MAP[code].labelTh}
+                  {allowedOperationalOptions.map((opt) => (
+                    <option key={opt.code} value={opt.code}>
+                      {opt.labelTh}
                     </option>
                   ))}
                 </select>
               )}
             />
+
+            <div className="rounded-xl bg-slate-50 dark:bg-[#163024] border border-slate-200/80 dark:border-[#244737] px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="text-slate-600 dark:text-slate-300 font-semibold">
+                สถานะจริงที่ระบบคำนวณได้ (แจ้งเตือนล่วงหน้า {warningDays} วัน):
+              </span>
+              <VehicleStatusBadge status={effectivePreviewStatus} />
+            </div>
+
             {isStatusTerminalLocked && (
-              <p className="text-[11px] text-rose-600 dark:text-rose-400 mt-1">
+              <p className="text-[11px] text-rose-600 dark:text-rose-400">
                 <i className="fa-solid fa-lock mr-1" />
-                สถานะสิ้นสุด — การคืนสถานะกลับเป็นปกติสงวนสิทธิ์เฉพาะ SUPERADMIN / APP_ADMIN
-              </p>
-            )}
-            {effectivePreviewStatus !== watchedStatus && (
-              <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
-                <i className="fa-solid fa-wand-magic-sparkles mr-1" />
-                ระบบจะคำนวณสถานะจริงตามวันสิ้นอายุเป็น &ldquo;{VEHICLE_STATUS_MAP[effectivePreviewStatus].labelTh}&rdquo;
+                สถานะสิ้นสุด — การคืนสถานะกลับเป็นปกติสงวนสิทธิ์เฉพาะ SuperAdmin
               </p>
             )}
           </div>
@@ -887,7 +1084,19 @@ export function VehicleFormModal({
                 )}
               />
             </div>
-          ) : null}
+          ) : (
+            <div className="rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/70 dark:border-emerald-900/50 p-3 text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed self-start">
+              <p className="font-bold text-[#00744B] dark:text-emerald-300 mb-1">
+                <i className="fa-solid fa-circle-info mr-1" />
+                ความเชื่อมโยงของสถานะยานพาหนะ
+              </p>
+              <p>
+                {OPERATIONAL_STATUS_OPTIONS.find((o) => o.code === watchedStatus)?.hint} ·{' '}
+                <strong>{VEHICLE_STATUS_MAP[effectivePreviewStatus].labelTh}</strong> จะถูกนำไปใช้นับยอด KPI
+                ทั้ง 9 การ์ด คิวติดตามด่วน กระดิ่งแจ้งเตือน และเงื่อนไขการต่ออายุภาษีอัตโนมัติ
+              </p>
+            </div>
+          )}
         </div>
 
         <div>

@@ -9,6 +9,7 @@ import { VehicleFormModal } from '@/components/vehicles/VehicleFormModal';
 import { VehicleDetailModal } from '@/components/vehicles/VehicleDetailModal';
 import { ALL_VEHICLE_STATUS_ORDER, VEHICLE_STATUS_MAP } from '@/lib/vehicleStatus';
 import { formatThaiDate } from '@/lib/thaiDate';
+import { formatVehicleCaretakerPositionLevel } from '@/lib/caretakerFormatter';
 import { escapeHtml } from '@/lib/htmlUtils';
 import { useAuthStore, isVehicleAdminOrAbove } from '@/stores/useAuthStore';
 import { useUiStore } from '@/stores/useUiStore';
@@ -102,6 +103,9 @@ export function VehiclesPage() {
         const pb = VEHICLE_STATUS_MAP[b.computed_status_code || b.status_code]?.priority ?? 99;
         if (pa !== pb) return pa - pb;
       } else if (sortBy === 'type') {
+        const orderA = a.vehicle_type_sort_order ?? 9999;
+        const orderB = b.vehicle_type_sort_order ?? 9999;
+        if (orderA !== orderB) return orderA - orderB;
         const cmp = (a.vehicle_type_name || '').localeCompare(b.vehicle_type_name || '', 'th');
         if (cmp !== 0) return cmp;
       } else if (sortBy === 'expiry') {
@@ -129,7 +133,12 @@ export function VehiclesPage() {
       .map(([org, typeMap]) => ({
         org,
         types: Array.from(typeMap.entries())
-          .sort(([a], [b]) => a.localeCompare(b, 'th'))
+          .sort(([aName, aRows], [bName, bRows]) => {
+            const oa = aRows[0]?.vehicle_type_sort_order ?? 9999;
+            const ob = bRows[0]?.vehicle_type_sort_order ?? 9999;
+            if (oa !== ob) return oa - ob;
+            return aName.localeCompare(bName, 'th');
+          })
           .map(([typeName, rows]) => ({ typeName, rows })),
       }));
   }, [filtered]);
@@ -214,9 +223,9 @@ export function VehiclesPage() {
                   <p className="text-xs font-semibold text-slate-800 dark:text-slate-100">
                     {v.caretaker_name || '-'}
                   </p>
-                  {(v.caretaker_position_display || v.caretaker_position) && (
+                  {formatVehicleCaretakerPositionLevel(v) && (
                     <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      {v.caretaker_position_display || v.caretaker_position}
+                      {formatVehicleCaretakerPositionLevel(v)}
                     </p>
                   )}
                 </td>

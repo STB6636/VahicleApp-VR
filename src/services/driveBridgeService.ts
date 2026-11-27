@@ -9,6 +9,13 @@ export const ALLOWED_ATTACHMENT_MIMES = [
 /** Must stay aligned with `MAX_BYTES = 15 * 1024 * 1024` in `docs/gas-drive-bridge/Code.gs`. */
 export const MAX_DRIVE_BRIDGE_FILE_MB = 15;
 
+/** Matches Portal SSO `SettingsGoogleDriveTab.tsx` strict Google Apps Script Web App `/exec` URL format. */
+export const GAS_EXEC_URL_REGEX = /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/i;
+
+export function isValidGasExecUrl(url: string | null | undefined): boolean {
+  return GAS_EXEC_URL_REGEX.test(String(url || '').trim());
+}
+
 /**
  * Normalizes a configured `max_file_mb` setting into the valid GAS Drive Bridge range [1, 15].
  * Guards against empty strings, NaN, and non-finite numbers so file-size checks can never be bypassed.
@@ -76,7 +83,54 @@ export function readFileAsBase64(file: File): Promise<string> {
   });
 }
 
+function isBridgeSuccess(json: Record<string, unknown> | null): boolean {
+  if (!json) return false;
+  return json.ok === true || json.success === true;
+}
+
 export const driveBridgeService = {
+  /**
+   * Verifies that the configured GAS Web App `/exec` URL is reachable and responding
+   * using Portal SSO v2.7.0 `GET ?action=verify&mode=ping` with fallback to `POST action=ping`.
+   */
+  async verifyBridgePing(bridgeUrl: string): Promise<DriveTestResult> {
+    const trimmed = bridgeUrl.trim();
+    if (!trimmed) {
+      return {
+        ok: false,
+        message: 'กรุณาระบุลิงก์ Google Apps Script Web App (ลงท้ายด้วย /exec)',
+      };
+    }
+    if (!isValidGasExecUrl(trimmed)) {
+      return {
+        ok: false,
+        message: 'รูปแบบลิงก์ไม่ถูกต้อง ต้องขึ้นต้นด้วย https://script.google.com/macros/s/... และลงท้ายด้วย /exec',
+      };
+    }
+
+    try {
+      const sep = trimmed.includes('?') ? '&' : '?';
+      const res = await fetch(`${trimmed}${sep}action=verify&mode=ping`, { method: 'GET' });
+      const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+      if (res.ok && isBridgeSuccess(json)) {
+        const ver = json?.version ? ` (v${String(json.version)})` : '';
+        return {
+          ok: true,
+          message: String(json?.message || `เชื่อมต่อ Google Apps Script Web App สำเร็จ${ver}`),
+        };
+      }
+      return {
+        ok: false,
+        message: String(json?.error || json?.message || `เชื่อมต่อ GAS Web App ไม่สำเร็จ (${res.status})`),
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        message: err instanceof Error ? err.message : 'ไม่สามารถติดต่อ Google Apps Script Web App ได้',
+      };
+    }
+  },
+
   async uploadFile(params: {
     bridgeUrl: string;
     folderIdOrUrl: string;
@@ -89,7 +143,10 @@ export const driveBridgeService = {
   }): Promise<DriveUploadResult> {
     const bridgeUrl = params.bridgeUrl.trim();
     if (!bridgeUrl) {
-      throw new Error('ยังไม่ได้ตั้งค่า GAS Google Drive Bridge URL ในหน้าตั้งค่าระบบ');
+      throw new Error('ยังไม่ได้ตั้งค่าลิงก์ Google Apps Script Web App (/exec) ในหน้าตั้งค่าระบบ');
+    }
+    if (!isValidGasExecUrl(bridgeUrl)) {
+      throw new Error('ลิงก์ Google Apps Script Web App ไม่ถูกต้อง (ต้องลงท้ายด้วย /exec)');
     }
 
     const folderId = extractGoogleDriveId(params.folderIdOrUrl);
@@ -103,41 +160,44 @@ export const driveBridgeService = {
     }
 
     const base64Data = await readFileAsBase64(params.file);
+    const cleanLabel = params.vehicleLabel.replace(/[\\/:*?"<>|]/g, '_').slice(0, 60);
+    const subFolderName = cleanLabel ? `${params.vehicleCode} - ${cleanLabel}` : params.vehicleCode;
 
-    // GAS Web App expects text/plain to avoid CORS preflight failures on script.google.com
+    // Dual-protocol payload compatible with BOTH Portal SSO DriveStorageBridge.gs v2.7.0
+    // (`action: 'upload'`, `folderId`, `subFolderName`, `base64DataUrl`) AND Vehicle App Code.gs (`uploadFile`).
     const res = await fetch(bridgeUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({
-        action: 'uploadFile',
+        action: 'upload',
         targetType: params.targetType,
+        category: 'document',
+        folderId: params.existingFolderId || folderId,
         rootFolderId: folderId,
         existingFolderId: params.existingFolderId || '',
+        subFolderName: params.existingFolderId ? '' : subFolderName,
         vehicleCode: params.vehicleCode,
         vehicleLabel: params.vehicleLabel,
         fileName: params.file.name,
         mimeType: params.file.type,
         base64Data,
+        base64DataUrl: `data:${params.file.type};base64,${base64Data}`,
       }),
     });
 
-    const json = (await res.json().catch(() => null)) as {
-      ok?: boolean;
-      url?: string;
-      folderId?: string;
-      fileName?: string;
-      error?: string;
-      message?: string;
-    } | null;
+    const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    const url = String(json?.url || json?.viewUrl || json?.webViewLink || '');
 
-    if (!res.ok || !json?.ok || !json.url) {
-      throw new Error(json?.error || json?.message || `อัปโหลดไฟล์ไปยัง Google Drive ไม่สำเร็จ (${res.status})`);
+    if (!res.ok || !isBridgeSuccess(json) || !url) {
+      throw new Error(
+        String(json?.error || json?.message || `อัปโหลดไฟล์ไปยัง Google Drive ไม่สำเร็จ (${res.status})`)
+      );
     }
 
     return {
-      url: json.url,
-      folderId: json.folderId || params.existingFolderId || folderId,
-      fileName: json.fileName || params.file.name,
+      url,
+      folderId: String(json?.folderId || params.existingFolderId || folderId),
+      fileName: String(json?.fileName || params.file.name),
     };
   },
 
@@ -149,7 +209,13 @@ export const driveBridgeService = {
     if (!bridgeUrl) {
       return {
         ok: false,
-        message: 'กรุณาระบุ GAS Google Drive Bridge URL ก่อนตรวจสอบลิงก์โฟลเดอร์',
+        message: 'กรุณาระบุลิงก์ Google Apps Script Web App (/exec) ก่อนตรวจสอบโฟลเดอร์',
+      };
+    }
+    if (!isValidGasExecUrl(bridgeUrl)) {
+      return {
+        ok: false,
+        message: 'รูปแบบลิงก์ GAS Web App ไม่ถูกต้อง (ต้องลงท้ายด้วย /exec)',
       };
     }
 
@@ -162,7 +228,28 @@ export const driveBridgeService = {
     }
 
     try {
-      const res = await fetch(bridgeUrl, {
+      // 1. Try Portal SSO v2.7.0 standard GET verification first
+      const sep = bridgeUrl.includes('?') ? '&' : '?';
+      const getRes = await fetch(
+        `${bridgeUrl}${sep}action=verify&folderId=${encodeURIComponent(folderId)}`,
+        { method: 'GET' }
+      );
+      const getJson = (await getRes.json().catch(() => null)) as Record<string, unknown> | null;
+      if (getRes.ok && isBridgeSuccess(getJson)) {
+        const folderName = String(getJson?.folderName || getJson?.name || '');
+        return {
+          ok: true,
+          folderName: folderName || undefined,
+          folderId: String(getJson?.folderId || folderId),
+          message: String(
+            getJson?.message ||
+              (folderName ? `เชื่อมต่อโฟลเดอร์ "${folderName}" สำเร็จ` : `เชื่อมต่อโฟลเดอร์ (${folderId}) สำเร็จ`)
+          ),
+        };
+      }
+
+      // 2. Fallback to legacy Vehicle App Code.gs POST action=testFolder
+      const postRes = await fetch(bridgeUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
@@ -170,26 +257,26 @@ export const driveBridgeService = {
           folderId,
         }),
       });
-      const json = (await res.json().catch(() => null)) as {
-        ok?: boolean;
-        folderName?: string;
-        folderId?: string;
-        message?: string;
-        error?: string;
-      } | null;
-
-      if (!res.ok || !json?.ok) {
+      const postJson = (await postRes.json().catch(() => null)) as Record<string, unknown> | null;
+      if (postRes.ok && isBridgeSuccess(postJson)) {
+        const folderName = String(postJson?.folderName || '');
         return {
-          ok: false,
-          message: json?.error || json?.message || `เชื่อมต่อ Google Drive Bridge ไม่สำเร็จ (${res.status})`,
+          ok: true,
+          folderName: folderName || undefined,
+          folderId: String(postJson?.folderId || folderId),
+          message: String(postJson?.message || `เชื่อมต่อโฟลเดอร์ "${folderName || folderId}" สำเร็จ`),
         };
       }
 
       return {
-        ok: true,
-        folderName: json.folderName,
-        folderId: json.folderId || folderId,
-        message: json.message || `เชื่อมต่อโฟลเดอร์ "${json.folderName || folderId}" สำเร็จ`,
+        ok: false,
+        message: String(
+          postJson?.error ||
+            postJson?.message ||
+            getJson?.error ||
+            getJson?.message ||
+            `เชื่อมต่อโฟลเดอร์ Google Drive ไม่สำเร็จ (${postRes.status})`
+        ),
       };
     } catch (err) {
       return {

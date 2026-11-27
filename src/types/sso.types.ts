@@ -29,6 +29,8 @@ export interface PortalPersonnelSummary {
 export interface PortalAdminScope {
   scope_level_no: 2 | 3;
   org_unit_id: string;
+  org_unit_name?: string | null;
+  parent_office_id?: string | null;
 }
 
 export interface PortalSsoUser {

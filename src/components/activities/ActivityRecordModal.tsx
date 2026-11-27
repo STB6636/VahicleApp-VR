@@ -108,7 +108,7 @@ export function ActivityRecordModal({
             setIncludeNormalForTax(false);
             setSelectedVehicleIds([]);
             setFormError(
-              `ยานพาหนะ ${target.vehicle_label} อยู่ในสถานะ "จำหน่าย" แล้ว เฉพาะผู้ดูแลระบบสูงสุด (SUPERADMIN / APP_ADMIN) เท่านั้นที่สามารถคืนสถานะได้`
+              `ยานพาหนะ ${target.vehicle_label} อยู่ในสถานะ "จำหน่าย" แล้ว เฉพาะผู้ดูแลระบบสูงสุด (SuperAdmin) เท่านั้นที่สามารถคืนสถานะได้`
             );
           }
           return;
@@ -181,6 +181,10 @@ export function ActivityRecordModal({
     if (activityType === 'TAX_RENEWAL') {
       if (!expiryDate) {
         setFormError('กรุณาระบุวันสิ้นอายุใหม่สำหรับการต่ออายุภาษี / ใบอนุญาต');
+        return;
+      }
+      if (startDate && expiryDate <= startDate) {
+        setFormError('วันสิ้นอายุใหม่ต้องมากกว่าวันที่ดำเนินการ');
         return;
       }
       if (hasVesselSelected && !documentNo.trim()) {

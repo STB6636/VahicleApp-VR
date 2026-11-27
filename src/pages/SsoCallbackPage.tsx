@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { extractSsoTokenFromLocation, stripSsoTokenFromUrl } from '@/lib/portalClient';
-import { exchangeSsoTokenAndSignIn } from '@/services/ssoAuthService';
+import { exchangeSsoTokenAndSignIn, PortalAuthBlockedError } from '@/services/ssoAuthService';
 import { useAuthStore } from '@/stores/useAuthStore';
 
 function clearSsoTokenFromBrowserUrl(): void {
@@ -47,8 +47,12 @@ export function SsoCallbackPage() {
         await exchangeSsoTokenAndSignIn(ssoToken);
         navigate('/dashboard', { replace: true });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'ไม่สามารถยืนยันตัวตนจาก Portal SSO-VR ได้';
-        useAuthStore.getState().setBlocked('SSO_EXCHANGE_FAILED', msg);
+        if (err instanceof PortalAuthBlockedError) {
+          useAuthStore.getState().setBlocked(err.reason, err.message);
+        } else {
+          const msg = err instanceof Error ? err.message : 'ไม่สามารถยืนยันตัวตนจาก Portal SSO-VR ได้';
+          useAuthStore.getState().setBlocked('SSO_EXCHANGE_FAILED', msg);
+        }
         navigate('/portal-required', { replace: true });
       }
     })();

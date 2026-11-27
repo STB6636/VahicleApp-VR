@@ -2,8 +2,10 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { vehicleService } from '@/services/vehicleService';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { QUERY_KEYS } from '@/lib/queryClient';
 import { VEHICLE_STATUS_MAP } from '@/lib/vehicleStatus';
+import { formatVehicleCaretakerPositionLevel } from '@/lib/caretakerFormatter';
 import { VehicleStatusBadge } from '@/components/common/VehicleStatusBadge';
 import { VehicleDetailModal } from '@/components/vehicles/VehicleDetailModal';
 import { formatThaiDate, formatThaiDateTime } from '@/lib/thaiDate';
@@ -27,12 +29,21 @@ const STATUS_CARDS: Array<{
   { key: 'DISPOSED', label: 'จำหน่าย', icon: 'fa-ban', accent: 'text-slate-500 bg-slate-500/15' },
 ];
 
+const URGENT_GROUP_ORDER: VehicleStatusCode[] = [
+  'EXPIRED',
+  'MAINTENANCE_EXPIRED',
+  'WARNING',
+  'MAINTENANCE_WARNING',
+  'MAINTENANCE',
+];
+
 export function DashboardPage() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const appPermission = useAuthStore((s) => s.appPermission);
   const canManage = isVehicleAdminOrAbove(user, appPermission);
 
+  const { settings } = useAppSettings(true);
   const [detailVehicle, setDetailVehicle] = useState<VehicleEnrichedRow | null>(null);
 
   const { data: vehicles = [], isLoading, error } = useQuery({
@@ -61,21 +72,36 @@ export function DashboardPage() {
     [vehicles]
   );
 
-  const trackingVehicles = useMemo(
-    () =>
-      vehicles
-        .filter((v) => VEHICLE_STATUS_MAP[v.computed_status_code || v.status_code]?.needsTracking)
-        .sort((a, b) => {
-          const pa = VEHICLE_STATUS_MAP[a.computed_status_code || a.status_code]?.priority ?? 99;
-          const pb = VEHICLE_STATUS_MAP[b.computed_status_code || b.status_code]?.priority ?? 99;
-          if (pa !== pb) return pa - pb;
-          return String(a.current_expiry_date || '').localeCompare(String(b.current_expiry_date || ''));
-        })
-        .slice(0, 15),
-    [vehicles]
-  );
+  // Urgent tracking queue grouped by the 5 urgent statuses (mirrors Ex Project view-dashboard)
+  const groupedTracking = useMemo(() => {
+    const urgent = vehicles
+      .filter((v) => VEHICLE_STATUS_MAP[v.computed_status_code || v.status_code]?.needsTracking)
+      .sort((a, b) => {
+        const pa = VEHICLE_STATUS_MAP[a.computed_status_code || a.status_code]?.priority ?? 99;
+        const pb = VEHICLE_STATUS_MAP[b.computed_status_code || b.status_code]?.priority ?? 99;
+        if (pa !== pb) return pa - pb;
+        return String(a.current_expiry_date || '').localeCompare(String(b.current_expiry_date || ''));
+      })
+      .slice(0, settings.dashboardTrackingLimit);
 
-  const latest5 = useMemo(() => recentActivities.slice(0, 5), [recentActivities]);
+    const groups: Array<{ statusCode: VehicleStatusCode; labelTh: string; rows: VehicleEnrichedRow[] }> = [];
+    for (const code of URGENT_GROUP_ORDER) {
+      const rows = urgent.filter((v) => (v.computed_status_code || v.status_code) === code);
+      if (rows.length > 0) {
+        groups.push({
+          statusCode: code,
+          labelTh: VEHICLE_STATUS_MAP[code].labelTh,
+          rows,
+        });
+      }
+    }
+    return { total: urgent.length, groups };
+  }, [vehicles, settings.dashboardTrackingLimit]);
+
+  const latestActivities = useMemo(
+    () => recentActivities.slice(0, settings.dashboardRecentLimit),
+    [recentActivities, settings.dashboardRecentLimit]
+  );
 
   return (
     <div className="space-y-6">
@@ -118,7 +144,7 @@ export function DashboardPage() {
         })}
       </section>
 
-      {/* Main Content Split: Tracking Queue + Latest Activities */}
+      {/* Main Content Split: 5-Status Grouped Tracking Queue + Latest Activities */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <section className="xl:col-span-2 rounded-2xl bg-white dark:bg-[#11231B] border border-slate-200/80 dark:border-[#244737] shadow-xs overflow-hidden">
           <div className="px-5 py-4 border-b border-slate-200/80 dark:border-[#244737] flex flex-wrap items-center justify-between gap-3">
@@ -127,7 +153,8 @@ export function DashboardPage() {
                 รายการที่ต้องติดตามเร่งด่วน
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                แสดงยานพาหนะสถานะขาดต่ออายุ กำลังจะขาดต่ออายุ และซ่อมบำรุง (สูงสุด 15 รายการ)
+                จัดกลุ่มตาม 5 สถานะเร่งด่วน (แจ้งเตือนล่วงหน้า {settings.warningDaysBefore} วัน · แสดงสูงสุด{' '}
+                {settings.dashboardTrackingLimit} รายการ)
               </p>
             </div>
             <button
@@ -140,72 +167,100 @@ export function DashboardPage() {
             </button>
           </div>
 
-          <div className="overflow-x-auto">
-            {trackingVehicles.length === 0 ? (
-              <div className="py-12 text-center text-sm text-slate-400">
-                <i className="fa-solid fa-circle-check text-2xl text-emerald-500/60 mb-2 block" />
-                ยังไม่มีรายการยานพาหนะที่ต้องติดตามในขณะนี้
-              </div>
-            ) : (
-              <table className="w-full text-sm text-left">
-                <thead className="bg-slate-50 dark:bg-[#163024] text-xs font-bold text-slate-600 dark:text-emerald-200">
-                  <tr>
-                    <th className="px-4 py-3">ประเภท / ทะเบียน</th>
-                    <th className="px-4 py-3">ผู้ดูแล</th>
-                    <th className="px-4 py-3">ส่วนราชการ</th>
-                    <th className="px-4 py-3">วันสิ้นอายุ</th>
-                    <th className="px-4 py-3">สถานะ</th>
-                    <th className="px-4 py-3 text-right">ดำเนินการ</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-[#244737]">
-                  {trackingVehicles.map((v) => (
-                    <tr key={v.id} className="hover:bg-slate-50/70 dark:hover:bg-white/5">
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          onClick={() => setDetailVehicle(v)}
-                          className="text-left group"
-                        >
-                          <p className="font-bold text-slate-800 dark:text-white group-hover:text-[#00744B] dark:group-hover:text-emerald-300">
-                            {v.vehicle_label}
-                          </p>
-                          <p className="text-xs text-slate-500">{v.vehicle_type_name}</p>
-                        </button>
-                      </td>
-                      <td className="px-4 py-3 text-slate-700 dark:text-slate-200">
-                        {v.caretaker_name || '-'}
-                      </td>
-                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
-                        {v.department_name || v.office_name || '-'}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs whitespace-nowrap">
-                        {formatThaiDate(v.current_expiry_date)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <VehicleStatusBadge status={v.computed_status_code || v.status_code} />
-                      </td>
-                      <td className="px-4 py-3 text-right whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            navigate('/activities', { state: { preselectedVehicleId: v.id } })
-                          }
-                          className="px-2.5 py-1 rounded-lg bg-emerald-500/12 hover:bg-emerald-500/20 text-[#00744B] dark:text-emerald-300 text-xs font-bold transition"
-                        >
-                          <i className="fa-solid fa-clipboard-check mr-1" />
-                          บันทึก
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
+          {groupedTracking.total === 0 ? (
+            <div className="py-12 text-center text-sm text-slate-400">
+              <i className="fa-solid fa-circle-check text-2xl text-emerald-500/60 mb-2 block" />
+              ยังไม่มีรายการยานพาหนะที่ต้องติดตามในขณะนี้
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-200/80 dark:divide-[#244737]">
+              {groupedTracking.groups.map((grp) => (
+                <div key={grp.statusCode}>
+                  <div className="px-5 py-2.5 bg-slate-50/90 dark:bg-[#163024] flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <VehicleStatusBadge status={grp.statusCode} />
+                      <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                        {grp.rows.length} รายการ
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/vehicles?status=${grp.statusCode}`)}
+                      className="text-[11px] font-bold text-[#00744B] dark:text-emerald-400 hover:underline"
+                    >
+                      ดูทั้งหมดในกลุ่มนี้
+                    </button>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                      <thead className="bg-white dark:bg-[#11231B] text-[11px] font-bold text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-[#244737]">
+                        <tr>
+                          <th className="px-4 py-2">ประเภท / ทะเบียน</th>
+                          <th className="px-4 py-2">ผู้ดูแล / ตำแหน่ง+ระดับ</th>
+                          <th className="px-4 py-2">ส่วนราชการ</th>
+                          <th className="px-4 py-2">วันสิ้นอายุ</th>
+                          <th className="px-4 py-2 text-right">ดำเนินการ</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-[#244737]">
+                        {grp.rows.map((v) => {
+                          const posLevel = formatVehicleCaretakerPositionLevel(v);
+                          return (
+                            <tr key={v.id} className="hover:bg-slate-50/70 dark:hover:bg-white/5">
+                              <td className="px-4 py-3">
+                                <button
+                                  type="button"
+                                  onClick={() => setDetailVehicle(v)}
+                                  className="text-left group"
+                                >
+                                  <p className="font-bold text-slate-800 dark:text-white group-hover:text-[#00744B] dark:group-hover:text-emerald-300">
+                                    {v.vehicle_label}
+                                  </p>
+                                  <p className="text-xs text-slate-500">{v.vehicle_type_name}</p>
+                                </button>
+                              </td>
+                              <td className="px-4 py-3">
+                                <p className="text-xs font-semibold text-slate-800 dark:text-slate-100">
+                                  {v.caretaker_name || '-'}
+                                </p>
+                                {posLevel && (
+                                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                                    {posLevel}
+                                  </p>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-xs text-slate-600 dark:text-slate-300">
+                                {v.department_name || v.office_name || '-'}
+                              </td>
+                              <td className="px-4 py-3 font-mono text-xs whitespace-nowrap">
+                                {formatThaiDate(v.current_expiry_date)}
+                              </td>
+                              <td className="px-4 py-3 text-right whitespace-nowrap">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    navigate('/activities', { state: { preselectedVehicleId: v.id } })
+                                  }
+                                  className="px-2.5 py-1 rounded-lg bg-emerald-500/12 hover:bg-emerald-500/20 text-[#00744B] dark:text-emerald-300 text-xs font-bold transition"
+                                >
+                                  <i className="fa-solid fa-clipboard-check mr-1" />
+                                  บันทึก
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
-        {/* Latest 5 Activities */}
+        {/* Latest Activities */}
         <section className="rounded-2xl bg-white dark:bg-[#11231B] border border-slate-200/80 dark:border-[#244737] shadow-xs overflow-hidden flex flex-col">
           <div className="px-5 py-4 border-b border-slate-200/80 dark:border-[#244737] flex items-center justify-between gap-2">
             <div>
@@ -213,7 +268,7 @@ export function DashboardPage() {
                 กิจกรรมล่าสุด
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                รายการบันทึกล่าสุด 5 รายการ
+                รายการบันทึกล่าสุด {settings.dashboardRecentLimit} รายการ
               </p>
             </div>
             <button
@@ -226,12 +281,12 @@ export function DashboardPage() {
           </div>
 
           <div className="divide-y divide-slate-100 dark:divide-[#244737] flex-1">
-            {latest5.length === 0 ? (
+            {latestActivities.length === 0 ? (
               <div className="py-12 px-4 text-center text-xs text-slate-400">
                 ยังไม่มีประวัติการทำรายการ
               </div>
             ) : (
-              latest5.map((act) => {
+              latestActivities.map((act) => {
                 const v = vehicleMap.get(act.vehicle_id);
                 return (
                   <div key={act.id} className="px-4 py-3 space-y-1">

@@ -2,8 +2,11 @@ import { useQuery } from '@tanstack/react-query';
 import { ResponsiveModal } from '@/components/common/ResponsiveModal';
 import { VehicleStatusBadge } from '@/components/common/VehicleStatusBadge';
 import { vehicleService } from '@/services/vehicleService';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { QUERY_KEYS } from '@/lib/queryClient';
 import { formatThaiDate, formatThaiDateTime } from '@/lib/thaiDate';
+import { formatVehicleCaretakerPositionLevel } from '@/lib/caretakerFormatter';
+import { useAuthStore, isVehicleSuperAdmin } from '@/stores/useAuthStore';
 import type { VehicleEnrichedRow } from '@/types/vehicle.types';
 
 export interface VehicleDetailModalProps {
@@ -21,6 +24,11 @@ export function VehicleDetailModal({
   onEdit,
   onRecordActivity,
 }: VehicleDetailModalProps) {
+  const user = useAuthStore((s) => s.user);
+  const appPermission = useAuthStore((s) => s.appPermission);
+  const isSuper = isVehicleSuperAdmin(user, appPermission);
+  const { settings } = useAppSettings(Boolean(vehicle));
+
   const { data: activities = [], isLoading: loadingHistory } = useQuery({
     queryKey: QUERY_KEYS.activities(vehicle?.id),
     queryFn: () => vehicleService.listRecentActivities(20, vehicle?.id),
@@ -31,6 +39,8 @@ export function VehicleDetailModal({
 
   const status = vehicle.computed_status_code || vehicle.status_code;
   const days = vehicle.days_until_expiry;
+  const canRecordForVehicle = Boolean(onRecordActivity && (status !== 'DISPOSED' || isSuper));
+  const caretakerPosLevel = formatVehicleCaretakerPositionLevel(vehicle);
 
   return (
     <ResponsiveModal
@@ -45,7 +55,7 @@ export function VehicleDetailModal({
           <button type="button" onClick={onClose} className="bma-btn-outline">
             ปิดหน้าต่าง
           </button>
-          {onRecordActivity && (
+          {canRecordForVehicle && onRecordActivity && (
             <button
               type="button"
               onClick={() => {
@@ -86,7 +96,7 @@ export function VehicleDetailModal({
                   className={`text-xs font-bold ${
                     days < 0
                       ? 'text-rose-600 dark:text-rose-400'
-                      : days <= 45
+                      : days <= settings.warningDaysBefore
                         ? 'text-amber-600 dark:text-amber-400'
                         : 'text-emerald-700 dark:text-emerald-300'
                   }`}
@@ -139,7 +149,7 @@ export function VehicleDetailModal({
           <InfoItem label="ฝ่าย / ส่วน (Lv3)" value={vehicle.department_name} />
           <InfoItem label="กลุ่มงาน (Lv4)" value={vehicle.division_name} />
           <InfoItem label="ผู้ดูแลยานพาหนะ" value={vehicle.caretaker_name} />
-          <InfoItem label="ตำแหน่งผู้ดูแล" value={vehicle.caretaker_position_display || vehicle.caretaker_position} />
+          <InfoItem label="ตำแหน่งและระดับผู้ดูแล" value={caretakerPosLevel} />
         </div>
 
         {vehicle.latest_file_url && (

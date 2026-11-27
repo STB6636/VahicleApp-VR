@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  formatCaretakerFullLabel,
+  formatCaretakerName,
+  formatCaretakerPositionLevel,
+} from '@/lib/caretakerFormatter';
 import type { PortalPersonnelDirectoryRow } from '@/types/vehicle.types';
 
 export interface SmartCaretakerFilterParams {
@@ -10,10 +15,11 @@ export interface SmartCaretakerFilterParams {
 }
 
 /**
- * Pure Smart Caretaker Filter mirroring Ex Project rules + Portal SSO 4-level Org UUIDs:
- * - Scopes to selected departmentId (or officeId if no department selected).
- * - Normal mode: filters by `defaultPosition` (e.g., "นายท้ายเรือ" for vessel, "พนักงานขับรถยนต์" for car).
- * - Unlocked mode (`showAllInOrg = true`): displays all personnel in that org unit.
+ * Pure Smart Caretaker Filter (Level 3 Department-scoped):
+ * - Excludes inactive/deprovisioned personnel (`allows_account_provision === false`).
+ * - Scopes to selected departmentId (Lv3 ส่วน/ฝ่าย) — or officeId only if no department selected.
+ * - Normal mode (`showAllInOrg = false`): filters by `defaultPosition` (e.g., "พนักงานขับรถยนต์", "นายท้ายเรือ").
+ * - Unlocked mode (`showAllInOrg = true`): displays ALL personnel in that ส่วน/ฝ่าย regardless of position.
  */
 export function filterCaretakerCandidates(
   params: SmartCaretakerFilterParams
@@ -22,6 +28,8 @@ export function filterCaretakerCandidates(
   const targetPos = (defaultPosition || '').trim();
 
   return personnel.filter((p) => {
+    if (p.allows_account_provision === false) return false;
+
     if (departmentId) {
       if (p.department_id !== departmentId) return false;
     } else if (officeId) {
@@ -37,8 +45,7 @@ export function filterCaretakerCandidates(
 }
 
 export function formatCaretakerLabel(p: PortalPersonnelDirectoryRow): string {
-  const pos = p.position_display || p.position_name || '';
-  return pos ? `${p.full_name} — ${pos}` : p.full_name;
+  return formatCaretakerFullLabel(p);
 }
 
 export interface SmartCaretakerComboboxProps {
@@ -52,7 +59,10 @@ export interface SmartCaretakerComboboxProps {
   onToggleShowAll: (showAll: boolean) => void;
   disabled?: boolean;
   loading?: boolean;
+  errorMessage?: string | null;
+  onRetry?: () => void;
   fallbackLabel?: string | null;
+  selectedOrgName?: string | null;
 }
 
 export function SmartCaretakerCombobox({
@@ -66,12 +76,27 @@ export function SmartCaretakerCombobox({
   onToggleShowAll,
   disabled = false,
   loading = false,
+  errorMessage = null,
+  onRetry,
   fallbackLabel,
+  selectedOrgName,
 }: SmartCaretakerComboboxProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(-1);
+
+  const allActiveInOrgCount = useMemo(
+    () =>
+      filterCaretakerCandidates({
+        personnel,
+        officeId,
+        departmentId,
+        defaultPosition: null,
+        showAllInOrg: true,
+      }).length,
+    [personnel, officeId, departmentId]
+  );
 
   const candidates = useMemo(
     () =>
@@ -102,7 +127,6 @@ export function SmartCaretakerCombobox({
 
   const visibleOptions = useMemo(() => {
     const q = query.trim().toLowerCase();
-    // If query matches currently selected person label or fallbackLabel, show full candidate list on focus
     if (selectedPerson && query === formatCaretakerLabel(selectedPerson)) {
       return candidates;
     }
@@ -111,7 +135,14 @@ export function SmartCaretakerCombobox({
     }
     if (!q) return candidates;
     return candidates.filter((p) => {
-      const hay = [p.full_name, p.position_name, p.position_display, p.department_name]
+      const hay = [
+        formatCaretakerName(p),
+        formatCaretakerPositionLevel(p),
+        p.position_name,
+        p.position_level_name,
+        p.position_display,
+        p.department_name,
+      ]
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
@@ -154,16 +185,34 @@ export function SmartCaretakerCombobox({
             disabled={disabled}
             className="rounded border-slate-300 text-[#00744B] focus:ring-emerald-500"
           />
-          <span>แสดงบุคลากรทั้งหมดในส่วนราชการนี้ (ปลดล็อกตัวกรองตำแหน่ง)</span>
+          <span>แสดงบุคลากรทั้งหมดในส่วนราชการนี้ (รวมตำแหน่งอื่นนอกเหนือจาก {defaultPosition || 'ตำแหน่งหลัก'})</span>
         </label>
         <span className="text-[11px] text-slate-400">
           {loading
             ? 'กำลังโหลดรายชื่อ...'
             : showAllInOrg
               ? `ทั้งหมด ${candidates.length} คน`
-              : `เฉพาะตำแหน่ง "${defaultPosition || 'ทั้งหมด'}" (${candidates.length} คน)`}
+              : `เฉพาะตำแหน่ง "${defaultPosition || 'ทั้งหมด'}" (${candidates.length} / ${allActiveInOrgCount} คน)`}
         </span>
       </div>
+
+      {errorMessage && (
+        <div className="rounded-xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-xs text-rose-700 dark:text-rose-200 flex items-center justify-between gap-2">
+          <span>
+            <i className="fa-solid fa-triangle-exclamation mr-1.5" />
+            โหลดรายชื่อบุคลากรไม่สำเร็จ: {errorMessage}
+          </span>
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold shrink-0"
+            >
+              ลองใหม่
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="relative">
         <input
@@ -241,9 +290,19 @@ export function SmartCaretakerCombobox({
             className="absolute z-40 mt-1 w-full max-h-56 overflow-y-auto rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl py-1 text-sm"
           >
             {visibleOptions.length === 0 ? (
-              <li className="px-3 py-3 text-center text-xs text-slate-400">
-                ไม่พบรายชื่อบุคลากรที่ตรงเงื่อนไข
-                {!showAllInOrg && defaultPosition && (
+              <li className="px-3 py-3 text-center text-xs text-slate-400 space-y-1">
+                {allActiveInOrgCount === 0 && !loading ? (
+                  <p>
+                    ยังไม่พบข้อมูลบุคลากรใน{' '}
+                    <strong className="text-slate-600 dark:text-slate-300">
+                      {selectedOrgName || 'ส่วนราชการที่เลือก'}
+                    </strong>{' '}
+                    ในฐานข้อมูล Portal SSO
+                  </p>
+                ) : (
+                  <p>ไม่พบรายชื่อบุคลากรที่ตรงเงื่อนไข</p>
+                )}
+                {!showAllInOrg && defaultPosition && allActiveInOrgCount > 0 && (
                   <button
                     type="button"
                     onMouseDown={(e) => {
@@ -252,7 +311,7 @@ export function SmartCaretakerCombobox({
                     }}
                     className="block mx-auto mt-1.5 text-emerald-600 dark:text-emerald-400 font-bold hover:underline"
                   >
-                    ปลดล็อกแสดงบุคลากรทั้งหมดในส่วนราชการนี้
+                    ปลดล็อกแสดงบุคลากรทั้งหมดในส่วนราชการนี้ ({allActiveInOrgCount} คน)
                   </button>
                 )}
               </li>
@@ -260,6 +319,8 @@ export function SmartCaretakerCombobox({
               visibleOptions.map((p, idx) => {
                 const isSelected = p.id === value;
                 const isActive = idx === activeIndex;
+                const fullName = formatCaretakerName(p);
+                const posLevel = formatCaretakerPositionLevel(p);
                 return (
                   <li
                     key={p.id}
@@ -278,9 +339,9 @@ export function SmartCaretakerCombobox({
                     }`}
                   >
                     <div className="min-w-0">
-                      <p className="text-xs font-bold truncate">{p.full_name}</p>
+                      <p className="text-xs font-bold truncate">{fullName}</p>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                        {p.position_display || p.position_name || '-'}
+                        {posLevel || '-'}
                         {p.department_name ? ` · ${p.department_name}` : ''}
                       </p>
                     </div>

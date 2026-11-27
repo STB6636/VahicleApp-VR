@@ -2,16 +2,31 @@ import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
 import { createPortalClient } from '@/lib/portalClient';
 import {
   hasPortalHandshakeFlag,
+  isVehicleAdminOrAbove,
   markPortalHandshakeFlag,
   useAuthStore,
+  type PortalBlockReason,
 } from '@/stores/useAuthStore';
 import type { PortalMeResponse, PortalSsoExchangeResponse } from '@/types/sso.types';
+
+export const USER_ROLE_CLOSED_MESSAGE =
+  'บัญชีระดับผู้ใช้งานทั่วไป (User) ยังไม่เปิดให้เข้าใช้งานระบบยานพาหนะราชการในขณะนี้ (เปิดเฉพาะระดับ SuperAdmin และ Admin สำนักงาน/กอง หรือ ส่วน/ฝ่าย) กรุณากลับไปยัง Portal SSO-VR';
+
+export class PortalAuthBlockedError extends Error {
+  readonly reason: PortalBlockReason;
+  constructor(reason: PortalBlockReason, message: string) {
+    super(message);
+    this.name = 'PortalAuthBlockedError';
+    this.reason = reason;
+  }
+}
 
 /**
  * Step 1 (Portal SSO Handshake):
  * Exchanges a one-time `sso_token` issued by Portal SSO-VR via `POST /portal-api/sso/exchange`,
  * verifies the returned `otp_hash` against shared Supabase Auth (persisted strictly in sessionStorage),
- * and establishes the active Portal SSO session in Zustand.
+ * defensively enriches `admin_scope` via `GET /portal-api/me`, and enforces 3-role access policy
+ * (SuperAdmin & Admin [Lv2/Lv3] allowed; User currently blocked).
  */
 export async function exchangeSsoTokenAndSignIn(ssoToken: string): Promise<PortalSsoExchangeResponse> {
   if (!isSupabaseConfigured) {
@@ -31,7 +46,14 @@ export async function exchangeSsoTokenAndSignIn(ssoToken: string): Promise<Porta
   }
 
   if (res.user.role !== 'SUPERADMIN' && !res.app_permission) {
-    throw new Error('บัญชีของท่านไม่ได้รับสิทธิ์เข้าใช้งานระบบยานพาหนะราชการ');
+    throw new PortalAuthBlockedError(
+      'NO_APP_PERMISSION',
+      'บัญชีของท่านไม่ได้รับสิทธิ์เข้าใช้งานระบบยานพาหนะราชการ'
+    );
+  }
+
+  if (!isVehicleAdminOrAbove(res.user, res.app_permission ?? null)) {
+    throw new PortalAuthBlockedError('USER_ROLE_NOT_SUPPORTED', USER_ROLE_CLOSED_MESSAGE);
   }
 
   const { error: otpError } = await supabase.auth.verifyOtp({
@@ -42,22 +64,64 @@ export async function exchangeSsoTokenAndSignIn(ssoToken: string): Promise<Porta
     throw new Error(`ไม่สามารถสร้างเซสชัน Supabase Auth ได้: ${otpError.message}`);
   }
 
+  let finalUser = res.user;
+  let finalPersonnel = res.personnel ?? null;
+  let finalPermission = res.app_permission ?? null;
+
+  // Defensively enrich `admin_scope` (with org_unit_name & parent_office_id) via /me if missing
+  if (finalUser.role === 'ADMIN' && !finalUser.admin_scope) {
+    try {
+      const { data: sessData } = await supabase.auth.getSession();
+      const accessToken = sessData.session?.access_token;
+      if (accessToken) {
+        const me = (await createPortalClient(accessToken).getMe()) as PortalMeResponse;
+        if (me?.success && me.user) {
+          finalUser = {
+            ...finalUser,
+            ...me.user,
+            username: me.user.username ?? finalUser.username,
+            email: me.user.email ?? finalUser.email ?? me.personnel?.email ?? null,
+          };
+          finalPersonnel = me.personnel ?? finalPersonnel;
+          finalPermission = me.app_permission ?? finalPermission;
+        }
+      }
+    } catch {
+      // Fall back to /sso/exchange payload cleanly
+    }
+  }
+
+  if (finalUser.must_change_credential) {
+    await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+    throw new PortalAuthBlockedError(
+      'NO_APP_PERMISSION',
+      'กรุณาเปลี่ยนรหัสผ่านเริ่มต้นใน Portal SSO-VR ก่อนเข้าใช้งานระบบนี้'
+    );
+  }
+
+  if (!isVehicleAdminOrAbove(finalUser, finalPermission)) {
+    await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+    throw new PortalAuthBlockedError('USER_ROLE_NOT_SUPPORTED', USER_ROLE_CLOSED_MESSAGE);
+  }
+
   useAuthStore.getState().setSession({
-    user: res.user,
-    personnel: res.personnel ?? null,
-    appPermission: res.app_permission ?? null,
+    user: finalUser,
+    personnel: finalPersonnel,
+    appPermission: finalPermission,
   });
 
-  return res;
+  return {
+    ...res,
+    user: finalUser,
+    personnel: finalPersonnel,
+    app_permission: finalPermission,
+  };
 }
 
 /**
  * Step 2 (Tab-Refresh Verification & Direct-Link Blocking):
  * Called on app bootstrap when NOT arriving via `/sso-callback?sso_token=...`.
- * Enforces Requirement 8:
- *   1. Must have active `sessionStorage` Portal handshake flag (impossible on fresh direct link).
- *   2. Must have a valid Supabase session in `sessionStorage`.
- *   3. Server-side re-verification via `GET /portal-api/me` must confirm active VEHICLE_APP permission.
+ * Enforces Requirement 8 & 3-Role Access Policy (SuperAdmin & Admin only; User blocked).
  */
 export async function verifyExistingPortalSession(): Promise<boolean> {
   const store = useAuthStore.getState();
@@ -111,6 +175,12 @@ export async function verifyExistingPortalSession(): Promise<boolean> {
         'NO_APP_PERMISSION',
         'สิทธิ์การเข้าใช้งานระบบยานพาหนะราชการของท่านถูกระงับหรือหมดอายุแล้ว'
       );
+      return false;
+    }
+
+    if (!isVehicleAdminOrAbove(me.user, me.app_permission ?? null)) {
+      await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+      store.setBlocked('USER_ROLE_NOT_SUPPORTED', USER_ROLE_CLOSED_MESSAGE);
       return false;
     }
 

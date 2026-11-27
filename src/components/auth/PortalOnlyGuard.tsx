@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore, isVehicleAdminOrAbove, isVehicleSuperAdmin } from '@/stores/useAuthStore';
-import { verifyExistingPortalSession } from '@/services/ssoAuthService';
+import { verifyExistingPortalSession, USER_ROLE_CLOSED_MESSAGE } from '@/services/ssoAuthService';
 import { extractSsoTokenFromLocation } from '@/lib/portalClient';
 
 interface PortalOnlyGuardProps {
@@ -35,8 +35,10 @@ export function PortalOnlyGuard({
   useEffect(() => {
     if (!hydrated && !incomingToken) {
       void verifyExistingPortalSession();
+    } else if (ssoVerified && user && !isVehicleAdminOrAbove(user, appPermission)) {
+      useAuthStore.getState().setBlocked('USER_ROLE_NOT_SUPPORTED', USER_ROLE_CLOSED_MESSAGE);
     }
-  }, [hydrated, incomingToken]);
+  }, [hydrated, incomingToken, ssoVerified, user, appPermission]);
 
   if (incomingToken) {
     return <Navigate to={`/sso-callback?sso_token=${encodeURIComponent(incomingToken)}`} replace />;
@@ -57,6 +59,11 @@ export function PortalOnlyGuard({
   }
 
   if (!ssoVerified || !user) {
+    return <Navigate to="/portal-required" replace />;
+  }
+
+  // Enforce Requirement 4.1: User role is currently closed (SuperAdmin & Admin only)
+  if (!isVehicleAdminOrAbove(user, appPermission)) {
     return <Navigate to="/portal-required" replace />;
   }
 

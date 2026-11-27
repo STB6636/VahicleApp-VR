@@ -1,5 +1,6 @@
 import { formatThaiDate, getTodayBeFileTag, getTodayIsoBangkok } from '@/lib/thaiDate';
 import { VEHICLE_STATUS_MAP } from '@/lib/vehicleStatus';
+import { formatVehicleCaretakerPositionLevel } from '@/lib/caretakerFormatter';
 import {
   computeNineStatusSummary,
   resolveVehicleOrgLabel,
@@ -12,6 +13,9 @@ export interface ExcelExportParams {
   departmentLabel: string;
   reporterName: string;
   reporterPosition?: string;
+  reportHeaderOrg?: string;
+  reportHeaderSub?: string;
+  appDisplayName?: string;
 }
 
 export async function buildVehicleReportWorkbookBuffer(
@@ -45,10 +49,17 @@ export async function buildVehicleReportWorkbookBuffer(
     { header: 'จำนวน (คัน/ลำ)', key: 'count', width: 18 },
   ];
 
-  wsSummary.insertRow(1, ['รายงานสถานะการต่อภาษีและใบอนุญาตยานพาหนะราชการ']);
+  const orgHeader = [params.reportHeaderOrg, params.reportHeaderSub].filter(Boolean).join(' · ');
+  wsSummary.insertRow(1, [
+    params.appDisplayName
+      ? `รายงานสถานะยานพาหนะราชการ — ${params.appDisplayName}`
+      : 'รายงานสถานะการต่อภาษีและใบอนุญาตยานพาหนะราชการ',
+  ]);
   wsSummary.mergeCells('A1:B1');
   wsSummary.getCell('A1').font = { name: 'Sarabun', size: 14, bold: true, color: { argb: 'FF005B2E' } };
-  wsSummary.insertRow(2, [`ส่วนราชการ: ${params.departmentLabel} | วันที่ออกรายงาน: ${reportDateTh}`]);
+  wsSummary.insertRow(2, [
+    `${orgHeader ? `${orgHeader} | ` : ''}ส่วนราชการ: ${params.departmentLabel} | วันที่ออกรายงาน: ${reportDateTh}`,
+  ]);
   wsSummary.mergeCells('A2:B2');
   wsSummary.getCell('A2').font = { name: 'Sarabun', size: 10, color: { argb: 'FF475569' } };
   wsSummary.insertRow(3, [`ผู้จัดทำรายงาน: ${params.reporterName}${params.reporterPosition ? ` (${params.reporterPosition})` : ''}`]);
@@ -105,6 +116,9 @@ export async function buildVehicleReportWorkbookBuffer(
     const sortedCars = [...params.cars].sort((a, b) => {
       const deptCmp = resolveVehicleOrgLabel(a).localeCompare(resolveVehicleOrgLabel(b), 'th');
       if (deptCmp !== 0) return deptCmp;
+      const orderA = a.vehicle_type_sort_order ?? 9999;
+      const orderB = b.vehicle_type_sort_order ?? 9999;
+      if (orderA !== orderB) return orderA - orderB;
       const typeCmp = (a.vehicle_type_name || '').localeCompare(b.vehicle_type_name || '', 'th');
       if (typeCmp !== 0) return typeCmp;
       return String(a.current_expiry_date || '').localeCompare(String(b.current_expiry_date || ''));
@@ -112,6 +126,12 @@ export async function buildVehicleReportWorkbookBuffer(
 
     sortedCars.forEach((v, idx) => {
       const st = v.computed_status_code || v.status_code;
+      const posLevel = formatVehicleCaretakerPositionLevel(v);
+      const caretakerText = v.caretaker_name
+        ? posLevel
+          ? `${v.caretaker_name} (${posLevel})`
+          : v.caretaker_name
+        : '-';
       const row = wsCars.addRow({
         no: idx + 1,
         code: v.vehicle_code,
@@ -120,7 +140,7 @@ export async function buildVehicleReportWorkbookBuffer(
         plate: v.license_plate || '-',
         province: v.province || '-',
         brandModel: [v.brand, v.model].filter(Boolean).join(' ') || '-',
-        caretaker: v.caretaker_name || '-',
+        caretaker: caretakerText,
         expiry: formatThaiDate(v.current_expiry_date, 'numeric') || '-',
         status: VEHICLE_STATUS_MAP[st]?.labelTh ?? st,
       });
@@ -155,13 +175,19 @@ export async function buildVehicleReportWorkbookBuffer(
 
     sortedVessels.forEach((v, idx) => {
       const st = v.computed_status_code || v.status_code;
+      const posLevel = formatVehicleCaretakerPositionLevel(v);
+      const caretakerText = v.caretaker_name
+        ? posLevel
+          ? `${v.caretaker_name} (${posLevel})`
+          : v.caretaker_name
+        : '-';
       const row = wsVessels.addRow({
         no: idx + 1,
         code: v.vehicle_code,
         dept: resolveVehicleOrgLabel(v),
         vesselName: v.vessel_name || '-',
         licenseNo: v.vessel_license_no || '-',
-        caretaker: v.caretaker_name || '-',
+        caretaker: caretakerText,
         expiry: formatThaiDate(v.current_expiry_date, 'numeric') || '-',
         status: VEHICLE_STATUS_MAP[st]?.labelTh ?? st,
       });

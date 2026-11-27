@@ -103,4 +103,22 @@ export const portalDirectoryService = {
     };
     return Array.isArray(res?.data) ? res.data : [];
   },
+
+  async listPositionNames(): Promise<string[]> {
+    const token = await getSessionAccessToken();
+    if (!token) return [];
+    try {
+      const client = createPortalClient(token);
+      const res = (await client.getPositions()) as {
+        success?: boolean;
+        positions?: Array<{ name_th?: string; is_active?: boolean }>;
+      };
+      const names = (res?.positions ?? [])
+        .filter((p) => p?.name_th && p.is_active !== false)
+        .map((p) => String(p.name_th).trim());
+      return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b, 'th'));
+    } catch {
+      return [];
+    }
+  },
 };

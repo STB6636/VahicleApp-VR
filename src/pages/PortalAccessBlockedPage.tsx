@@ -9,6 +9,7 @@ export function PortalAccessBlockedPage() {
     DIRECT_ACCESS_BLOCKED: 'ต้องเข้าใช้งานผ่าน Portal SSO-VR เท่านั้น',
     SESSION_EXPIRED: 'เซสชันการเชื่อมต่อหมดอายุ',
     NO_APP_PERMISSION: 'ไม่มีสิทธิ์เข้าใช้งานระบบนี้',
+    USER_ROLE_NOT_SUPPORTED: 'ยังไม่เปิดให้สิทธิ์ระดับผู้ใช้งานทั่วไป (User) เข้าใช้งาน',
     SSO_EXCHANGE_FAILED: 'การยืนยันตัวตน SSO ไม่สำเร็จ',
     SIGNED_OUT: 'ออกจากระบบเรียบร้อยแล้ว',
   };

@@ -111,10 +111,11 @@
 | `scopes` (PDPA Least Privilege) | `permission:read`, `reference:read`, `position:read`, `personnel:read` |
 | `webapp_roles` | `APP_ADMIN` (ระดับ 90, `is_app_admin=true`), `FLEET_ADMIN` (ระดับ 50, จัดการรถในขอบเขต), `DEPT_OFFICER` (ระดับ 10, `is_default_on_grant=true`, ดู/บันทึกต่อภาษีและแจ้งซ่อมในฝ่ายตน) |
 
-### 3.2 การเปิด Schema `vehicleapp` บน Supabase
+### 3.2 การเปิด Schema `vehicleapp` และลงทะเบียนแอปบน Supabase
 
-1. รัน Migration `supabase/migrations/001_vehicleapp_schema.sql` และ `supabase/migrations/002_vehicleapp_hardening.sql` บนโปรเจกต์ `Portal SSO-STB` เรียบร้อยแล้ว (6 ตาราง, 1 วิว `v_vehicles_enriched` พร้อม PDPA-safe `fn_get_caretaker_display`, 14 RLS Policies, Terminal State Guards, Revoke `PUBLIC` Grants, 4 ประเภทยานพาหนะ, 9 ค่าตั้งต้น)
+1. รัน Migration `supabase/migrations/001_vehicleapp_schema.sql`, `supabase/migrations/002_vehicleapp_hardening.sql` และ `supabase/migrations/003_vehicleapp_terminal_guard.sql` บนโปรเจกต์ `Portal SSO-STB` (`aburwjfaeutgbzfdvefe`) เรียบร้อยแล้ว (6 ตาราง, 1 วิว `v_vehicles_enriched` พร้อม PDPA-safe `fn_get_caretaker_display`, 14 RLS Policies, Terminal State Guards ทั้งระดับ RPC และ `BEFORE UPDATE` Trigger `trg_vehicles_terminal_status_guard` บน `vehicleapp.vehicles`, Revoke `PUBLIC` Grants, 4 ประเภทยานพาหนะ, 9 ค่าตั้งต้น)
 2. เปิดใช้งาน **Supabase Data API Exposed Schemas** เป็น `public, graphql_public, vehicleapp` ผ่าน `supabase/config.toml` (`supabase config push`) เรียบร้อยแล้ว และยืนยัน PostgREST ตอบรับ Schema `vehicleapp` พร้อมบล็อก `anon` (`42501` / HTTP 401) แล้ว
+3. รันสคริปต์ Data-Only `supabase/scripts/register_vehicle_app_portal_sso.sql` ลงทะเบียน `VEHICLE_APP` บน Portal SSO-VR จริงเรียบร้อยแล้ว (Zero DDL บน `public` — ยืนยัน `VEHICLE_APP` ACTIVE พร้อม 3 บทบาท `APP_ADMIN` / `FLEET_ADMIN` / `DEPT_OFFICER`, 4 Scopes และ 2 Allowed Origins)
 
 ---
 
@@ -140,12 +141,12 @@
 | **Phase 1: Foundation, Schema, SSO & AI Workflow** | โคลน Ex Project, ติดตั้ง AI-Brain, สร้าง Schema `vehicleapp` จริงบน Supabase (6 ตาราง + วิว + RPC + 14 RLS), วางโครง Vite 6 + React 18 + TS + BMA Theme, เชื่อม Portal SSO SDK, บล็อกการเข้าลิงก์ตรง (`PortalOnlyGuard` + `sessionStorage`), Unit Tests + Push GitHub | **✅ ดำเนินการเสร็จสมบูรณ์** |
 | **Phase 2: Core Vehicle CRUD & Activity Engine** | สร้าง `VehicleFormModal` (รถ/เรือ + Smart Caretaker Combobox จาก `portal-api /personnel` + `ThaiDatePicker` พ.ศ.), `VehicleDetailModal`, `ActivityRecordModal` (Single & Multi-Vehicle Batch + Picker), `ActivityEditModal`, และ Notification Bell เชื่อม `vehicleapp.notification_reads` | **✅ ดำเนินการเสร็จสมบูรณ์** |
 | **Phase 3: Reports (PDF/Excel), Drive Storage Bridge & Settings UI** | สร้างหน้าพิมพ์รายงาน A4 (ตรา กทม. + สรุปยอด 9 สถานะ), ส่งออก ExcelJS, เชื่อม GAS Google Drive Bridge สำหรับไฟล์ใบอนุญาตเรือ/หลักฐานต่อภาษี, หน้าตั้งค่าแบบตรวจสอบลิงก์และ Audit Log viewer | **✅ ดำเนินการเสร็จสมบูรณ์** |
-| **Phase 4: Data Migration, E2E SSO Verification & Production Rollout** | สคริปต์นำเข้าข้อมูลจาก Google Sheets เดิม (`scripts/migrate-from-sheets.mjs`), สคริปต์ลงทะเบียน `VEHICLE_APP` ใน Portal SSO-VR (`supabase/scripts/register_vehicle_app_portal_sso.sql`), 36 Unit/Component Tests ผ่าน 100%, Push ขึ้น GitHub `STB6636/VahicleApp-VR` (รอลงทะเบียนแอปใน Portal SSO-VR จริง + รันย้ายข้อมูลจริง + E2E 3 บทบาท) | **🟡 โค้ดและสคริปต์เสร็จสมบูรณ์ (รอรันลงทะเบียน Portal SSO & ย้ายข้อมูลจริง)** |
+| **Phase 4: Data Migration, E2E SSO Verification & Production Rollout** | สคริปต์นำเข้าข้อมูลจาก Google Sheets เดิม (`scripts/migrate-from-sheets.mjs`), ลงทะเบียน `VEHICLE_APP` บน Portal SSO-VR จริงแล้ว (`supabase/scripts/register_vehicle_app_portal_sso.sql`), ติดตั้งและทดสอบ DB Terminal-State Guard (`003_vehicleapp_terminal_guard.sql`), ปรับเพดาน `max_file_mb` ให้ตรง GAS Drive Bridge (1–15 MB), 45 Unit/Component Tests (9 suites) ผ่าน 100%, Push ขึ้น GitHub `STB6636/VahicleApp-VR` (รอรันย้ายข้อมูล Sheets จริง + ทดสอบ E2E 3 บทบาทในเบราว์เซอร์) | **🟡 โค้ด, Migration 003 และลงทะเบียน Portal SSO จริงเสร็จสมบูรณ์ (รอย้ายข้อมูล Sheets & E2E 3 บทบาท)** |
 
 ---
 
 ## 6. แผนการทดสอบและการตรวจสอบคุณภาพ (QA & Verification Matrix)
 
-1. **Unit Tests (Vitest):** ทดสอบสมการสถานะ 8 สถานะ (ขอบเขต 45 วัน, 0 วัน, -1 วัน, สถานะควบซ่อมบำรุง, สถานะ Terminal), ทดสอบ `PortalOnlyGuard` (บล็อกลิงก์ตรง, ดึง `sso_token` ทั้ง Browser/Hash mode, ลำดับสิทธิ์), ทดสอบ `resolveRouterConfig`
-2. **Database & RLS Verification:** ทดสอบ `vehicleapp.fn_schema_health()`, ทดสอบ RLS แยกสิทธิ์ `SUPERADMIN` / `ADMIN` Lv2-Lv3 / `DEPT_OFFICER` / ผู้ใช้ที่ไม่มีสิทธิ์ `VEHICLE_APP`
+1. **Unit & Component Tests (Vitest — 9 Suites / 45 Tests):** ทดสอบสมการสถานะ 8 สถานะ, `PortalOnlyGuard` & `SsoCallbackPage`, `resolveRouterConfig`, Caretaker/Activity helpers, รายงาน ExcelJS binary + 9-status summary, GAS Drive Bridge + เพดาน `max_file_mb` 1–15 MB ใน `SettingsPage`, Async Org Selects, Modal Stack Esc, HTML Escaping และ Legacy Sheets Migration Parser
+2. **Database, Trigger & RLS Verification:** ทดสอบ `vehicleapp.fn_schema_health()`, ทดสอบ Trigger `trg_vehicles_terminal_status_guard` (`003_vehicleapp_terminal_guard.sql`) ด้วย Rolled-Back Live Postgres Test ครบ 6 กรณี (บล็อก non-superadmin 42501 / อนุญาต `DECOMMISSIONED -> DISPOSED` / อนุญาต metadata edit / อนุญาต SUPERADMIN restore) และยืนยันข้อมูลลงทะเบียน `VEHICLE_APP` บน Portal SSO-VR จริง
 3. **Security Audit:** ยืนยันว่าไม่มีการเก็บความลับใน Git, ยืนยันว่าเปิดลิงก์ตรงใน Incognito/แท็บใหม่ถูกบล็อก 100%, ยืนยันว่า `sso_token` ใช้ซ้ำไม่ได้ (replay returns 401)

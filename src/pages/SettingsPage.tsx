@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Swal from 'sweetalert2';
 import { vehicleService } from '@/services/vehicleService';
-import { driveBridgeService } from '@/services/driveBridgeService';
+import { driveBridgeService, MAX_DRIVE_BRIDGE_FILE_MB } from '@/services/driveBridgeService';
 import { QUERY_KEYS } from '@/lib/queryClient';
 import { formatThaiDateTime } from '@/lib/thaiDate';
 import { escapeHtml } from '@/lib/htmlUtils';
@@ -102,14 +102,23 @@ export function SettingsPage() {
     }
 
     const warnVal = draftValues.warning_days_before;
-    if (warnVal !== undefined && (Number.isNaN(Number(warnVal)) || Number(warnVal) < 1 || Number(warnVal) > 365)) {
+    if (
+      warnVal !== undefined &&
+      (warnVal.trim() === '' || !Number.isFinite(Number(warnVal)) || Number(warnVal) < 1 || Number(warnVal) > 365)
+    ) {
       showToast('จำนวนวันแจ้งเตือนล่วงหน้าต้องอยู่ระหว่าง 1 - 365 วัน', 'error');
       return;
     }
 
     const maxMbVal = draftValues.max_file_mb;
-    if (maxMbVal !== undefined && (Number.isNaN(Number(maxMbVal)) || Number(maxMbVal) < 1 || Number(maxMbVal) > 50)) {
-      showToast('ขนาดไฟล์สูงสุดต้องอยู่ระหว่าง 1 - 50 MB', 'error');
+    if (
+      maxMbVal !== undefined &&
+      (maxMbVal.trim() === '' ||
+        !Number.isFinite(Number(maxMbVal)) ||
+        Number(maxMbVal) < 1 ||
+        Number(maxMbVal) > MAX_DRIVE_BRIDGE_FILE_MB)
+    ) {
+      showToast(`ขนาดไฟล์สูงสุดต้องอยู่ระหว่าง 1 - ${MAX_DRIVE_BRIDGE_FILE_MB} MB`, 'error');
       return;
     }
 
@@ -279,7 +288,7 @@ export function SettingsPage() {
           </section>
 
           {/* Editable Settings Form */}
-          <form onSubmit={handleSaveSettings} className="space-y-5">
+          <form onSubmit={handleSaveSettings} noValidate className="space-y-5">
             {loadingSettings ? (
               <div className="rounded-2xl bg-white dark:bg-[#11231B] border border-slate-200 dark:border-[#244737] py-12 text-center text-sm text-slate-400">
                 กำลังโหลดพารามิเตอร์ตั้งค่าระบบ...
@@ -340,6 +349,18 @@ export function SettingsPage() {
                                     row.key === 'warning_days_before' || row.key === 'max_file_mb'
                                       ? 'number'
                                       : 'text'
+                                  }
+                                  min={
+                                    row.key === 'warning_days_before' || row.key === 'max_file_mb'
+                                      ? 1
+                                      : undefined
+                                  }
+                                  max={
+                                    row.key === 'warning_days_before'
+                                      ? 365
+                                      : row.key === 'max_file_mb'
+                                        ? MAX_DRIVE_BRIDGE_FILE_MB
+                                        : undefined
                                   }
                                   value={val}
                                   onChange={(e) => {

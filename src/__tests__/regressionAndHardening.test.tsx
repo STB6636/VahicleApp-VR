@@ -13,9 +13,12 @@ import { QUERY_KEYS } from '@/lib/queryClient';
 import { VehicleFormModal } from '@/components/vehicles/VehicleFormModal';
 import { ActivityRecordModal } from '@/components/activities/ActivityRecordModal';
 import { SmartCaretakerCombobox } from '@/components/common/SmartCaretakerCombobox';
+import { SettingsPage } from '@/pages/SettingsPage';
 import { vehicleService } from '@/services/vehicleService';
 import { driveBridgeService } from '@/services/driveBridgeService';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { useUiStore } from '@/stores/useUiStore';
+import Swal from 'sweetalert2';
 import type {
   PortalOrgUnitRow,
   PortalPersonnelDirectoryRow,
@@ -566,6 +569,103 @@ describe('Regression Suite: Interactive Modals, Async Org Selects, Terminal Lock
     });
     expect(input.value).toBe('นายเดิม ย้ายไปแล้ว');
     expect(onChange).not.toHaveBeenCalled();
+
+    cleanup();
+  });
+
+  it('enforces GAS Drive Bridge 1-15 MB ceiling for max_file_mb in SettingsPage', async () => {
+    useUiStore.setState({ toasts: [] });
+    vi.spyOn(vehicleService, 'listSettings').mockResolvedValue([
+      {
+        key: 'warning_days_before',
+        value: '45',
+        description: 'วันแจ้งเตือนล่วงหน้า',
+        setting_group: 'general',
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+      {
+        key: 'max_file_mb',
+        value: '10',
+        description: 'ขนาดไฟล์แนบสูงสุด (MB)',
+        setting_group: 'general',
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+    ]);
+    vi.spyOn(vehicleService, 'getSchemaHealth').mockResolvedValue({
+      schema: 'vehicleapp',
+      healthy: true,
+      vehicle_types_count: 4,
+      vehicles_count: 0,
+      activities_count: 0,
+      settings_count: 2,
+      checked_at: '2026-01-01T00:00:00Z',
+    });
+    const updateSpy = vi.spyOn(vehicleService, 'updateSettings').mockResolvedValue(undefined);
+    const swalSpy = vi.spyOn(Swal, 'fire').mockResolvedValue({
+      isConfirmed: true,
+      isDenied: false,
+      isDismissed: false,
+    } as never);
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={qc}>
+          <SettingsPage />
+        </QueryClientProvider>
+      );
+    });
+    await flushPromises();
+
+    const maxFileInput = container.querySelector<HTMLInputElement>('#setting-max_file_mb')!;
+    const form = container.querySelector<HTMLFormElement>('form')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+
+    expect(maxFileInput).toBeTruthy();
+    expect(maxFileInput.min).toBe('1');
+    expect(maxFileInput.max).toBe('15');
+
+    // 1. Value 16 (> 15 MB GAS ceiling) must be rejected with error toast and NOT save
+    await act(async () => {
+      setter.call(maxFileInput, '16');
+      maxFileInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await flushPromises();
+
+    expect(useUiStore.getState().toasts.some((t) => t.variant === 'error' && t.message.includes('1 - 15 MB'))).toBe(true);
+    expect(swalSpy).not.toHaveBeenCalled();
+    expect(updateSpy).not.toHaveBeenCalled();
+
+    // 2. Value 0 (< 1 MB) must also be rejected
+    useUiStore.setState({ toasts: [] });
+    await act(async () => {
+      setter.call(maxFileInput, '0');
+      maxFileInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await flushPromises();
+
+    expect(useUiStore.getState().toasts.some((t) => t.variant === 'error' && t.message.includes('1 - 15 MB'))).toBe(true);
+    expect(swalSpy).not.toHaveBeenCalled();
+    expect(updateSpy).not.toHaveBeenCalled();
+
+    // 3. Value 15 (exact ceiling) must pass validation, prompt Swal, and save
+    useUiStore.setState({ toasts: [] });
+    await act(async () => {
+      setter.call(maxFileInput, '15');
+      maxFileInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await flushPromises();
+
+    expect(swalSpy).toHaveBeenCalledTimes(1);
+    expect(updateSpy).toHaveBeenCalledWith([{ key: 'max_file_mb', value: '15' }]);
 
     cleanup();
   });

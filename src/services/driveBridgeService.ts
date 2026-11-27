@@ -6,6 +6,9 @@ export const ALLOWED_ATTACHMENT_MIMES = [
   'image/png',
 ] as const;
 
+/** Must stay aligned with `MAX_BYTES = 15 * 1024 * 1024` in `docs/gas-drive-bridge/Code.gs`. */
+export const MAX_DRIVE_BRIDGE_FILE_MB = 15;
+
 /**
  * Extracts a Google Drive File/Folder ID from either a full Google Drive URL
  * or a raw Drive ID string.
@@ -34,11 +37,12 @@ export function validateAttachmentFile(
       error: 'รองรับเฉพาะไฟล์ PDF, JPG และ PNG เท่านั้น',
     };
   }
-  const limitBytes = Math.max(1, maxFileMb) * 1024 * 1024;
+  const effectiveMaxMb = Math.min(MAX_DRIVE_BRIDGE_FILE_MB, Math.max(1, maxFileMb));
+  const limitBytes = effectiveMaxMb * 1024 * 1024;
   if (file.size > limitBytes) {
     return {
       valid: false,
-      error: `ขนาดไฟล์เกินกำหนด (สูงสุด ${maxFileMb} MB)`,
+      error: `ขนาดไฟล์เกินกำหนด (สูงสุด ${effectiveMaxMb} MB)`,
     };
   }
   return { valid: true };

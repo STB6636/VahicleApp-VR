@@ -5,7 +5,11 @@ import {
   groupCarsForReport,
   groupVesselsForReport,
 } from '@/lib/reportUtils';
-import { extractGoogleDriveId, validateAttachmentFile } from '@/services/driveBridgeService';
+import {
+  extractGoogleDriveId,
+  MAX_DRIVE_BRIDGE_FILE_MB,
+  validateAttachmentFile,
+} from '@/services/driveBridgeService';
 import type { VehicleEnrichedRow } from '@/types/vehicle.types';
 
 function makeRow(partial: Partial<VehicleEnrichedRow>): VehicleEnrichedRow {
@@ -121,10 +125,16 @@ describe('Phase 3: Google Drive Bridge helpers', () => {
     expect(extractGoogleDriveId('bad')).toBe('');
   });
 
-  it('validates allowed MIME types and file size limits', () => {
+  it('validates allowed MIME types and file size limits (capped at GAS Drive Bridge 15 MB ceiling)', () => {
+    expect(MAX_DRIVE_BRIDGE_FILE_MB).toBe(15);
     expect(validateAttachmentFile({ name: 'doc.pdf', type: 'application/pdf', size: 1024 }, 10).valid).toBe(true);
     expect(validateAttachmentFile({ name: 'img.png', type: 'image/png', size: 5 * 1024 * 1024 }, 10).valid).toBe(true);
     expect(validateAttachmentFile({ name: 'bad.svg', type: 'image/svg+xml', size: 500 }, 10).valid).toBe(false);
     expect(validateAttachmentFile({ name: 'huge.pdf', type: 'application/pdf', size: 11 * 1024 * 1024 }, 10).valid).toBe(false);
+    // Exact 15 MB ceiling passes; anything above 15 MB is rejected even if caller passes 20 MB
+    expect(validateAttachmentFile({ name: 'max.pdf', type: 'application/pdf', size: 15 * 1024 * 1024 }, 15).valid).toBe(true);
+    const overCeiling = validateAttachmentFile({ name: 'over.pdf', type: 'application/pdf', size: 16 * 1024 * 1024 }, 20);
+    expect(overCeiling.valid).toBe(false);
+    expect(overCeiling.error).toContain('15 MB');
   });
 });

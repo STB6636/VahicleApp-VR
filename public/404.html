@@ -6,9 +6,12 @@
   <script>
     (function () {
       var l = window.location;
+      var host = (l.hostname || l.host || '').toLowerCase();
       var segs = l.pathname.split('/').filter(Boolean);
-      var repoBase = segs.length > 0 ? '/' + segs[0] : '';
-      var subPath = segs.length > 1 ? '/' + segs.slice(1).join('/') : '/';
+      var isGithubPages = host.endsWith('github.io');
+      var repoBase = isGithubPages && segs.length > 0 ? '/' + segs[0] : '';
+      var restSegs = isGithubPages ? segs.slice(1) : segs;
+      var subPath = restSegs.length > 0 ? '/' + restSegs.join('/') : '/';
       l.replace(l.protocol + '//' + l.host + repoBase + '/#' + subPath + (l.search || ''));
     })();
   </script>

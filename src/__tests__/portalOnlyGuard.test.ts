@@ -47,30 +47,48 @@ describe('Portal-Only Entry Security (Requirement 8)', () => {
     expect(stripSsoTokenFromUrl('https://app.example.com/dashboard')).toBe('/dashboard');
   });
 
-  it('GitHub Pages 404.html redirect preserves subpath and sso_token for HashRouter', () => {
+  it('404.html redirect preserves subpath and sso_token on both GitHub Pages and root domains', () => {
     const html = fs.readFileSync(path.resolve(process.cwd(), 'public/404.html'), 'utf8');
     const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
     expect(scriptMatch).toBeTruthy();
 
-    let redirectedTo = '';
-    const fakeWindow = {
+    const runner = new Function('window', scriptMatch![1]);
+
+    // 1. GitHub Pages subpath (/VahicleApp-VR/sso-callback)
+    let ghRedirect = '';
+    runner({
       location: {
         protocol: 'https:',
         host: 'stb6636.github.io',
+        hostname: 'stb6636.github.io',
         pathname: '/VahicleApp-VR/sso-callback',
         search: '?sso_token=ONE_TIME_TOK',
         replace: (target: string) => {
-          redirectedTo = target;
+          ghRedirect = target;
         },
       },
-    };
+    });
+    expect(ghRedirect).toBe('https://stb6636.github.io/VahicleApp-VR/#/sso-callback?sso_token=ONE_TIME_TOK');
+    const ghParsed = new URL(ghRedirect);
+    expect(extractSsoTokenFromLocation(ghParsed.search, ghParsed.hash)).toBe('ONE_TIME_TOK');
 
-    const runner = new Function('window', scriptMatch![1]);
-    runner(fakeWindow);
-
-    expect(redirectedTo).toBe('https://stb6636.github.io/VahicleApp-VR/#/sso-callback?sso_token=ONE_TIME_TOK');
-    const parsed = new URL(redirectedTo);
-    expect(extractSsoTokenFromLocation(parsed.search, parsed.hash)).toBe('ONE_TIME_TOK');
+    // 2. Root-hosted domain (Cloudflare Pages: vehicle-stb.pages.dev/sso-callback) must NOT loop on /sso-callback/#/
+    let cfRedirect = '';
+    runner({
+      location: {
+        protocol: 'https:',
+        host: 'vehicle-stb.pages.dev',
+        hostname: 'vehicle-stb.pages.dev',
+        pathname: '/sso-callback',
+        search: '?sso_token=CF_TOK_999',
+        replace: (target: string) => {
+          cfRedirect = target;
+        },
+      },
+    });
+    expect(cfRedirect).toBe('https://vehicle-stb.pages.dev/#/sso-callback?sso_token=CF_TOK_999');
+    const cfParsed = new URL(cfRedirect);
+    expect(extractSsoTokenFromLocation(cfParsed.search, cfParsed.hash)).toBe('CF_TOK_999');
   });
 
   it('blocks direct URL access when sessionStorage handshake flag is missing', async () => {

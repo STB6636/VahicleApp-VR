@@ -8,7 +8,7 @@ import { ThaiDatePicker, focusInvalidThaiDateInput } from '@/components/common/T
 import { SmartCaretakerCombobox } from '@/components/common/SmartCaretakerCombobox';
 import { vehicleService } from '@/services/vehicleService';
 import { portalDirectoryService } from '@/services/portalDirectoryService';
-import { driveBridgeService, validateAttachmentFile } from '@/services/driveBridgeService';
+import { clampMaxFileMb, driveBridgeService, validateAttachmentFile } from '@/services/driveBridgeService';
 import { QUERY_KEYS } from '@/lib/queryClient';
 import {
   ALL_VEHICLE_STATUS_ORDER,
@@ -112,7 +112,7 @@ export function VehicleFormModal({
   }, [settings]);
 
   const warningDays = Number(settingsMap.warning_days_before || 45) || 45;
-  const maxFileMb = Number(settingsMap.max_file_mb || 10) || 10;
+  const maxFileMb = clampMaxFileMb(settingsMap.max_file_mb, 10);
   const driveBridgeUrl = (settingsMap.gas_drive_bridge_url || '').trim();
   const vesselFolderId = (settingsMap.vessel_license_folder_id || '').trim();
   const canUploadVesselFile = Boolean(driveBridgeUrl && vesselFolderId);

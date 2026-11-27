@@ -102,24 +102,28 @@ export function SettingsPage() {
     }
 
     const warnVal = draftValues.warning_days_before;
-    if (
-      warnVal !== undefined &&
-      (warnVal.trim() === '' || !Number.isFinite(Number(warnVal)) || Number(warnVal) < 1 || Number(warnVal) > 365)
-    ) {
-      showToast('จำนวนวันแจ้งเตือนล่วงหน้าต้องอยู่ระหว่าง 1 - 365 วัน', 'error');
-      return;
+    if (warnVal !== undefined) {
+      const trimmedWarn = warnVal.trim();
+      const parsedWarn = Number(trimmedWarn);
+      if (!/^\d+$/.test(trimmedWarn) || !Number.isInteger(parsedWarn) || parsedWarn < 1 || parsedWarn > 365) {
+        showToast('จำนวนวันแจ้งเตือนล่วงหน้าต้องเป็นจำนวนเต็มระหว่าง 1 - 365 วัน', 'error');
+        return;
+      }
     }
 
     const maxMbVal = draftValues.max_file_mb;
-    if (
-      maxMbVal !== undefined &&
-      (maxMbVal.trim() === '' ||
-        !Number.isFinite(Number(maxMbVal)) ||
-        Number(maxMbVal) < 1 ||
-        Number(maxMbVal) > MAX_DRIVE_BRIDGE_FILE_MB)
-    ) {
-      showToast(`ขนาดไฟล์สูงสุดต้องอยู่ระหว่าง 1 - ${MAX_DRIVE_BRIDGE_FILE_MB} MB`, 'error');
-      return;
+    if (maxMbVal !== undefined) {
+      const trimmedMaxMb = maxMbVal.trim();
+      const parsedMaxMb = Number(trimmedMaxMb);
+      if (
+        !/^\d+$/.test(trimmedMaxMb) ||
+        !Number.isInteger(parsedMaxMb) ||
+        parsedMaxMb < 1 ||
+        parsedMaxMb > MAX_DRIVE_BRIDGE_FILE_MB
+      ) {
+        showToast(`ขนาดไฟล์สูงสุดต้องเป็นจำนวนเต็มระหว่าง 1 - ${MAX_DRIVE_BRIDGE_FILE_MB} MB`, 'error');
+        return;
+      }
     }
 
     const summaryHtml = changedEntries
@@ -144,7 +148,13 @@ export function SettingsPage() {
     setSaving(true);
     try {
       await vehicleService.updateSettings(
-        changedEntries.map((c) => ({ key: c.key, value: c.newVal }))
+        changedEntries.map((c) => ({
+          key: c.key,
+          value:
+            c.key === 'warning_days_before' || c.key === 'max_file_mb'
+              ? String(Number(c.newVal.trim()))
+              : c.newVal,
+        }))
       );
       showToast(`บันทึกการตั้งค่า ${changedEntries.length} รายการเรียบร้อยแล้ว`, 'success');
       await Promise.all([
@@ -361,6 +371,11 @@ export function SettingsPage() {
                                       : row.key === 'max_file_mb'
                                         ? MAX_DRIVE_BRIDGE_FILE_MB
                                         : undefined
+                                  }
+                                  step={
+                                    row.key === 'warning_days_before' || row.key === 'max_file_mb'
+                                      ? 1
+                                      : undefined
                                   }
                                   value={val}
                                   onChange={(e) => {

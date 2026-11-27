@@ -5,7 +5,7 @@ import { ThaiDatePicker, focusInvalidThaiDateInput } from '@/components/common/T
 import { VehicleStatusBadge } from '@/components/common/VehicleStatusBadge';
 import { VehiclePickerModal } from '@/components/activities/VehiclePickerModal';
 import { vehicleService } from '@/services/vehicleService';
-import { driveBridgeService, validateAttachmentFile } from '@/services/driveBridgeService';
+import { clampMaxFileMb, driveBridgeService, validateAttachmentFile } from '@/services/driveBridgeService';
 import { QUERY_KEYS } from '@/lib/queryClient';
 import {
   ACTIVITY_TYPE_LIST,
@@ -65,7 +65,7 @@ export function ActivityRecordModal({
     return map;
   }, [settings]);
 
-  const maxFileMb = Number(settingsMap.max_file_mb || 10) || 10;
+  const maxFileMb = clampMaxFileMb(settingsMap.max_file_mb, 10);
   const driveBridgeUrl = (settingsMap.gas_drive_bridge_url || '').trim();
   const activityFolderId = (settingsMap.activity_folder_id || '').trim();
   const canUploadFile = Boolean(driveBridgeUrl && activityFolderId);

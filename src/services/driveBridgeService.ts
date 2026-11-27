@@ -10,6 +10,21 @@ export const ALLOWED_ATTACHMENT_MIMES = [
 export const MAX_DRIVE_BRIDGE_FILE_MB = 15;
 
 /**
+ * Normalizes a configured `max_file_mb` setting into the valid GAS Drive Bridge range [1, 15].
+ * Guards against empty strings, NaN, and non-finite numbers so file-size checks can never be bypassed.
+ */
+export function clampMaxFileMb(raw: unknown, fallback = 10): number {
+  const safeFallback = Number.isFinite(fallback)
+    ? Math.min(MAX_DRIVE_BRIDGE_FILE_MB, Math.max(1, fallback))
+    : 10;
+  if (raw === null || raw === undefined) return safeFallback;
+  if (typeof raw === 'string' && raw.trim() === '') return safeFallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return safeFallback;
+  return Math.min(MAX_DRIVE_BRIDGE_FILE_MB, Math.max(1, parsed));
+}
+
+/**
  * Extracts a Google Drive File/Folder ID from either a full Google Drive URL
  * or a raw Drive ID string.
  */
@@ -37,7 +52,7 @@ export function validateAttachmentFile(
       error: 'รองรับเฉพาะไฟล์ PDF, JPG และ PNG เท่านั้น',
     };
   }
-  const effectiveMaxMb = Math.min(MAX_DRIVE_BRIDGE_FILE_MB, Math.max(1, maxFileMb));
+  const effectiveMaxMb = clampMaxFileMb(maxFileMb, 10);
   const limitBytes = effectiveMaxMb * 1024 * 1024;
   if (file.size > limitBytes) {
     return {

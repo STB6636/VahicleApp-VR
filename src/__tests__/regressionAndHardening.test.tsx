@@ -616,13 +616,19 @@ describe('Regression Suite: Interactive Modals, Async Org Selects, Terminal Lock
     });
     await flushPromises();
 
+    const warnInput = container.querySelector<HTMLInputElement>('#setting-warning_days_before')!;
     const maxFileInput = container.querySelector<HTMLInputElement>('#setting-max_file_mb')!;
     const form = container.querySelector<HTMLFormElement>('form')!;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
 
+    expect(warnInput).toBeTruthy();
+    expect(warnInput.min).toBe('1');
+    expect(warnInput.max).toBe('365');
+    expect(warnInput.step).toBe('1');
     expect(maxFileInput).toBeTruthy();
     expect(maxFileInput.min).toBe('1');
     expect(maxFileInput.max).toBe('15');
+    expect(maxFileInput.step).toBe('1');
 
     // 1. Value 16 (> 15 MB GAS ceiling) must be rejected with error toast and NOT save
     await act(async () => {
@@ -653,9 +659,43 @@ describe('Regression Suite: Interactive Modals, Async Org Selects, Terminal Lock
     expect(swalSpy).not.toHaveBeenCalled();
     expect(updateSpy).not.toHaveBeenCalled();
 
-    // 3. Value 15 (exact ceiling) must pass validation, prompt Swal, and save
+    // 3. Decimal value 10.5 on max_file_mb must be rejected (integer-only)
     useUiStore.setState({ toasts: [] });
     await act(async () => {
+      setter.call(maxFileInput, '10.5');
+      maxFileInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await flushPromises();
+
+    expect(useUiStore.getState().toasts.some((t) => t.variant === 'error' && t.message.includes('1 - 15 MB'))).toBe(true);
+    expect(swalSpy).not.toHaveBeenCalled();
+    expect(updateSpy).not.toHaveBeenCalled();
+
+    // 4. Decimal value 45.5 on warning_days_before must be rejected (prevents fn_get_warning_days() stripping '.' -> 455)
+    useUiStore.setState({ toasts: [] });
+    await act(async () => {
+      setter.call(maxFileInput, '10');
+      maxFileInput.dispatchEvent(new Event('input', { bubbles: true }));
+      setter.call(warnInput, '45.5');
+      warnInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+    await flushPromises();
+
+    expect(useUiStore.getState().toasts.some((t) => t.variant === 'error' && t.message.includes('1 - 365 วัน'))).toBe(true);
+    expect(swalSpy).not.toHaveBeenCalled();
+    expect(updateSpy).not.toHaveBeenCalled();
+
+    // 5. Value 15 (exact integer ceiling) must pass validation, prompt Swal, and save
+    useUiStore.setState({ toasts: [] });
+    await act(async () => {
+      setter.call(warnInput, '45');
+      warnInput.dispatchEvent(new Event('input', { bubbles: true }));
       setter.call(maxFileInput, '15');
       maxFileInput.dispatchEvent(new Event('input', { bubbles: true }));
     });

@@ -6,6 +6,7 @@ import {
   groupVesselsForReport,
 } from '@/lib/reportUtils';
 import {
+  clampMaxFileMb,
   extractGoogleDriveId,
   MAX_DRIVE_BRIDGE_FILE_MB,
   validateAttachmentFile,
@@ -136,5 +137,18 @@ describe('Phase 3: Google Drive Bridge helpers', () => {
     const overCeiling = validateAttachmentFile({ name: 'over.pdf', type: 'application/pdf', size: 16 * 1024 * 1024 }, 20);
     expect(overCeiling.valid).toBe(false);
     expect(overCeiling.error).toContain('15 MB');
+
+    // NaN / non-finite / empty values must NEVER bypass size validation
+    expect(clampMaxFileMb(Number.NaN)).toBe(10);
+    expect(clampMaxFileMb(Number.POSITIVE_INFINITY)).toBe(10);
+    expect(clampMaxFileMb('')).toBe(10);
+    expect(clampMaxFileMb('25')).toBe(15);
+    expect(clampMaxFileMb('-5')).toBe(1);
+    const nanLimitCheck = validateAttachmentFile(
+      { name: 'huge100.pdf', type: 'application/pdf', size: 100 * 1024 * 1024 },
+      Number.NaN
+    );
+    expect(nanLimitCheck.valid).toBe(false);
+    expect(nanLimitCheck.error).toContain('10 MB');
   });
 });

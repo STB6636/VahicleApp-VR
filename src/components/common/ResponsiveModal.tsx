@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 export interface ResponsiveModalProps {
@@ -21,6 +21,10 @@ const SIZE_CLASSES: Record<NonNullable<ResponsiveModalProps['size']>, string> = 
   '2xl': 'max-w-5xl',
 };
 
+// Module-level modal stack so nested modals (e.g. VehiclePickerModal over ActivityRecordModal)
+// keep scroll-lock accurate and route Escape strictly to the topmost dialog.
+const openModalStack: string[] = [];
+
 export function ResponsiveModal({
   open,
   onClose,
@@ -32,20 +36,38 @@ export function ResponsiveModal({
   footer,
   preventBackdropClose = false,
 }: ResponsiveModalProps) {
+  const modalId = useId();
+  const [stackIndex, setStackIndex] = useState(0);
+
   useEffect(() => {
     if (!open) return undefined;
+
+    if (!openModalStack.includes(modalId)) {
+      openModalStack.push(modalId);
+    }
+    setStackIndex(Math.max(0, openModalStack.indexOf(modalId)));
     document.body.classList.add('bma-modal-open');
+
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key !== 'Escape') return;
+      if (preventBackdropClose) return;
+      const topId = openModalStack[openModalStack.length - 1];
+      if (topId === modalId) {
+        e.preventDefault();
         onClose();
       }
     };
     window.addEventListener('keydown', handleKey);
+
     return () => {
-      document.body.classList.remove('bma-modal-open');
+      const idx = openModalStack.indexOf(modalId);
+      if (idx >= 0) openModalStack.splice(idx, 1);
+      if (openModalStack.length === 0) {
+        document.body.classList.remove('bma-modal-open');
+      }
       window.removeEventListener('keydown', handleKey);
     };
-  }, [open, onClose]);
+  }, [open, onClose, modalId, preventBackdropClose]);
 
   if (!open || typeof document === 'undefined') return null;
 
@@ -54,12 +76,13 @@ export function ResponsiveModal({
       role="dialog"
       aria-modal="true"
       aria-label={title}
+      style={{ zIndex: 9990 + stackIndex }}
       onMouseDown={(e) => {
         if (!preventBackdropClose && e.target === e.currentTarget) {
           onClose();
         }
       }}
-      className="fixed inset-0 z-[9990] flex items-end sm:items-center justify-center bg-slate-950/65 backdrop-blur-xs p-0 sm:p-4"
+      className="fixed inset-0 flex items-end sm:items-center justify-center bg-slate-950/65 backdrop-blur-xs p-0 sm:p-4"
     >
       <div
         className={`w-full ${SIZE_CLASSES[size]} max-h-[94dvh] sm:max-h-[90dvh] flex flex-col rounded-t-3xl sm:rounded-2xl bg-white dark:bg-[#11231B] border border-slate-200 dark:border-[#244737] shadow-2xl overflow-hidden`}
@@ -79,8 +102,9 @@ export function ResponsiveModal({
           <button
             type="button"
             onClick={onClose}
+            disabled={preventBackdropClose}
             aria-label="ปิดหน้าต่าง"
-            className="w-8 h-8 rounded-xl bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition shrink-0"
+            className="w-8 h-8 rounded-xl bg-white/15 hover:bg-white/25 disabled:opacity-50 text-white flex items-center justify-center transition shrink-0"
           >
             <i className="fa-solid fa-xmark" />
           </button>

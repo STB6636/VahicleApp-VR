@@ -14,7 +14,9 @@ export const queryClient = new QueryClient({
 export const QUERY_KEYS = {
   vehicles: ['vehicleapp', 'vehicles'] as const,
   vehicleTypes: ['vehicleapp', 'vehicle_types'] as const,
-  activities: (vehicleId?: string) => ['vehicleapp', 'activities', vehicleId ?? 'all'] as const,
+  activitiesAll: ['vehicleapp', 'activities'] as const,
+  activities: (vehicleId?: string, limit?: number) =>
+    ['vehicleapp', 'activities', vehicleId ?? 'all', limit ?? 'default'] as const,
   settings: ['vehicleapp', 'settings'] as const,
   schemaHealth: ['vehicleapp', 'schema_health'] as const,
   notificationReads: ['vehicleapp', 'notification_reads'] as const,

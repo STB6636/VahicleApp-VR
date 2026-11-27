@@ -168,8 +168,16 @@ export interface AuditLogRow {
   created_at: string;
 }
 
+export interface PortalOrgUnitLevelRow {
+  id: string;
+  level_no: number;
+  code?: string | null;
+  name_th?: string | null;
+}
+
 export interface PortalOrgUnitRow {
   id: string;
+  level_id?: string | null;
   parent_id: string | null;
   level_no: number;
   code?: string | null;
@@ -195,6 +203,8 @@ export interface PortalPersonnelDirectoryRow {
   division_id?: string | null;
   division_name?: string | null;
   status?: string | null;
+  status_name?: string | null;
+  allows_account_provision?: boolean | null;
 }
 
 export interface DriveUploadResult {

@@ -48,7 +48,7 @@ export function ActivitiesPage() {
   }, [location.state, location.pathname, navigate]);
 
   const { data: activities = [], isLoading } = useQuery({
-    queryKey: QUERY_KEYS.activities(),
+    queryKey: QUERY_KEYS.activities(undefined, 200),
     queryFn: () => vehicleService.listRecentActivities(200),
   });
 

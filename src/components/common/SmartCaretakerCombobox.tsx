@@ -102,8 +102,11 @@ export function SmartCaretakerCombobox({
 
   const visibleOptions = useMemo(() => {
     const q = query.trim().toLowerCase();
-    // If query exactly matches currently selected label, show full candidate list on focus
+    // If query matches currently selected person label or fallbackLabel, show full candidate list on focus
     if (selectedPerson && query === formatCaretakerLabel(selectedPerson)) {
+      return candidates;
+    }
+    if (!selectedPerson && value && fallbackLabel && query === fallbackLabel) {
       return candidates;
     }
     if (!q) return candidates;
@@ -114,7 +117,7 @@ export function SmartCaretakerCombobox({
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [candidates, query, selectedPerson]);
+  }, [candidates, query, selectedPerson, value, fallbackLabel]);
 
   useEffect(() => {
     const onPointerDown = (e: MouseEvent) => {
@@ -124,12 +127,14 @@ export function SmartCaretakerCombobox({
           setQuery(formatCaretakerLabel(selectedPerson));
         } else if (!value) {
           setQuery('');
+        } else if (fallbackLabel) {
+          setQuery(fallbackLabel);
         }
       }
     };
     document.addEventListener('mousedown', onPointerDown);
     return () => document.removeEventListener('mousedown', onPointerDown);
-  }, [selectedPerson, value]);
+  }, [selectedPerson, value, fallbackLabel]);
 
   const handleSelect = (person: PortalPersonnelDirectoryRow) => {
     onChange(person.id);
@@ -190,7 +195,9 @@ export function SmartCaretakerCombobox({
             } else if (e.key === 'Enter' && open && activeIndex >= 0 && visibleOptions[activeIndex]) {
               e.preventDefault();
               handleSelect(visibleOptions[activeIndex]);
-            } else if (e.key === 'Escape') {
+            } else if (e.key === 'Escape' && open) {
+              e.preventDefault();
+              e.stopPropagation();
               setOpen(false);
             }
           }}

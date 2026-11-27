@@ -14,8 +14,14 @@ export interface ExcelExportParams {
   reporterPosition?: string;
 }
 
-export async function exportVehicleReportToExcel(params: ExcelExportParams): Promise<string> {
-  const ExcelJS = (await import('exceljs')).default;
+export async function buildVehicleReportWorkbookBuffer(
+  params: ExcelExportParams
+): Promise<{ fileName: string; buffer: ArrayBuffer }> {
+  const mod = await import('exceljs');
+  const ExcelJS =
+    mod.default && typeof mod.default.Workbook === 'function'
+      ? mod.default
+      : (mod as unknown as typeof mod.default);
   const wb = new ExcelJS.Workbook();
   wb.creator = params.reporterName || 'Vehicle App';
   wb.created = new Date();
@@ -164,7 +170,16 @@ export async function exportVehicleReportToExcel(params: ExcelExportParams): Pro
   }
 
   const fileName = `รายงานยานพาหนะ_${getTodayBeFileTag()}.xlsx`;
-  const buffer = await wb.xlsx.writeBuffer();
+  const rawBuffer = await wb.xlsx.writeBuffer();
+  const buffer =
+    rawBuffer instanceof ArrayBuffer
+      ? rawBuffer
+      : new Uint8Array(rawBuffer as Uint8Array).slice().buffer;
+  return { fileName, buffer };
+}
+
+export async function exportVehicleReportToExcel(params: ExcelExportParams): Promise<string> {
+  const { fileName, buffer } = await buildVehicleReportWorkbookBuffer(params);
   const blob = new Blob([buffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });

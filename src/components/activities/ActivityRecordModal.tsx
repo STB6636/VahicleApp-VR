@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ResponsiveModal } from '@/components/common/ResponsiveModal';
 import { ThaiDatePicker, focusInvalidThaiDateInput } from '@/components/common/ThaiDatePicker';
@@ -75,9 +75,17 @@ export function ActivityRecordModal({
     [isSuper]
   );
 
-  // Reset form state when modal opens
+  const wasOpenRef = useRef(false);
+
+  // Reset form state ONLY when modal transitions from closed -> open
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      wasOpenRef.current = false;
+      return;
+    }
+    if (wasOpenRef.current) return;
+    wasOpenRef.current = true;
+
     setFormError(null);
     setDocumentNo('');
     setStartDate(getTodayIsoBangkok());
@@ -91,7 +99,21 @@ export function ActivityRecordModal({
       const target = vehicles.find((v) => v.id === preselectedVehicleId);
       if (target) {
         const st = target.computed_status_code || target.status_code;
-        if (st === 'DECOMMISSIONED' || st === 'DISPOSED') {
+        if (st === 'DISPOSED') {
+          if (isSuper) {
+            setActivityType('RESTORE_NORMAL');
+            setSelectedVehicleIds([preselectedVehicleId]);
+          } else {
+            setActivityType('TAX_RENEWAL');
+            setIncludeNormalForTax(false);
+            setSelectedVehicleIds([]);
+            setFormError(
+              `ยานพาหนะ ${target.vehicle_label} อยู่ในสถานะ "จำหน่าย" แล้ว เฉพาะผู้ดูแลระบบสูงสุด (SUPERADMIN / APP_ADMIN) เท่านั้นที่สามารถคืนสถานะได้`
+            );
+          }
+          return;
+        }
+        if (st === 'DECOMMISSIONED') {
           setActivityType(isSuper ? 'RESTORE_NORMAL' : 'DISPOSE');
         } else if (st === 'MAINTENANCE') {
           setActivityType('MAINTENANCE_COMPLETE');
@@ -189,7 +211,8 @@ export function ActivityRecordModal({
             selectedVehicles.length > 1
               ? `${selectedVehicles.length}-vehicles`
               : leadVehicle?.vehicle_label || 'activity',
-          existingFolderId: selectedVehicles.length === 1 ? leadVehicle?.attachment_folder_id : null,
+          // Activity proofs always live under `activity_folder_id`, never inside a vessel's `vessel_license_folder_id`
+          existingFolderId: null,
           targetType: 'activity',
           file,
           maxFileMb,
@@ -213,7 +236,7 @@ export function ActivityRecordModal({
       showToast(result.message || `บันทึกรายการสำเร็จ ${result.updated_count} รายการ`, 'success');
       await Promise.all([
         qc.invalidateQueries({ queryKey: QUERY_KEYS.vehicles }),
-        qc.invalidateQueries({ queryKey: QUERY_KEYS.activities() }),
+        qc.invalidateQueries({ queryKey: QUERY_KEYS.activitiesAll }),
         qc.invalidateQueries({ queryKey: QUERY_KEYS.schemaHealth }),
       ]);
       onClose();
@@ -294,7 +317,18 @@ export function ActivityRecordModal({
                     <input
                       type="checkbox"
                       checked={includeNormalForTax}
-                      onChange={(e) => setIncludeNormalForTax(e.target.checked)}
+                      onChange={(e) => {
+                        const next = e.target.checked;
+                        setIncludeNormalForTax(next);
+                        if (!next) {
+                          const nextEligible = new Set(
+                            getEligibleVehiclesForActivity(vehicles, activityType, {
+                              includeNormalForTaxRenewal: false,
+                            }).map((v) => v.id)
+                          );
+                          setSelectedVehicleIds((prev) => prev.filter((id) => nextEligible.has(id)));
+                        }
+                      }}
                       className="rounded border-slate-300 text-[#00744B] focus:ring-emerald-500"
                     />
                     <span>รวมสถานะปกติ (ต่อล่วงหน้า)</span>

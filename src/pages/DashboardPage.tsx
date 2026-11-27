@@ -41,7 +41,7 @@ export function DashboardPage() {
   });
 
   const { data: recentActivities = [] } = useQuery({
-    queryKey: QUERY_KEYS.activities(),
+    queryKey: QUERY_KEYS.activities(undefined, 50),
     queryFn: () => vehicleService.listRecentActivities(50),
   });
 

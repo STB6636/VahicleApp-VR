@@ -43,10 +43,7 @@ export function ActivityEditModal({ activity, vehicle, onClose }: ActivityEditMo
         details: details.trim() || null,
       });
       showToast('อัปเดตข้อมูลประวัติกิจกรรมเรียบร้อยแล้ว', 'success');
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: QUERY_KEYS.activities() }),
-        qc.invalidateQueries({ queryKey: QUERY_KEYS.activities(activity.vehicle_id) }),
-      ]);
+      await qc.invalidateQueries({ queryKey: QUERY_KEYS.activitiesAll });
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'ไม่สามารถแก้ไขประวัติกิจกรรมได้');

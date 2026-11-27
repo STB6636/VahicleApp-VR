@@ -5,6 +5,7 @@ import { vehicleService } from '@/services/vehicleService';
 import { driveBridgeService } from '@/services/driveBridgeService';
 import { QUERY_KEYS } from '@/lib/queryClient';
 import { formatThaiDateTime } from '@/lib/thaiDate';
+import { escapeHtml } from '@/lib/htmlUtils';
 import { useUiStore } from '@/stores/useUiStore';
 import type { AppSettingRow } from '@/types/vehicle.types';
 
@@ -115,7 +116,7 @@ export function SettingsPage() {
     const summaryHtml = changedEntries
       .map(
         (c) =>
-          `<li style="margin-bottom:6px;text-align:left;"><strong>${c.description}</strong><br/><span style="color:#64748b;">เดิม:</span> ${c.oldVal || '(ว่าง)'}<br/><span style="color:#00744B;">ใหม่:</span> ${c.newVal || '(ว่าง)'}</li>`
+          `<li style="margin-bottom:6px;text-align:left;"><strong>${escapeHtml(c.description)}</strong><br/><span style="color:#64748b;">เดิม:</span> ${escapeHtml(c.oldVal) || '(ว่าง)'}<br/><span style="color:#00744B;">ใหม่:</span> ${escapeHtml(c.newVal) || '(ว่าง)'}</li>`
       )
       .join('');
 
@@ -139,6 +140,7 @@ export function SettingsPage() {
       showToast(`บันทึกการตั้งค่า ${changedEntries.length} รายการเรียบร้อยแล้ว`, 'success');
       await Promise.all([
         qc.invalidateQueries({ queryKey: QUERY_KEYS.settings }),
+        qc.invalidateQueries({ queryKey: QUERY_KEYS.vehicles }),
         qc.invalidateQueries({ queryKey: QUERY_KEYS.auditLogs }),
       ]);
     } catch (err) {

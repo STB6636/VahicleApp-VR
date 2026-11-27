@@ -187,6 +187,46 @@ export function normalizeThaiName(str) {
 }
 
 /**
+ * Joins `public.org_units` rows (which carry `level_id`, NOT `level_no`) with
+ * `public.org_unit_levels` rows (`{ id, level_no }`) to attach `level_no` (1..4).
+ */
+export function normalizeOrgUnitsWithLevels(orgUnits, orgUnitLevels) {
+  const levelById = new Map(
+    (orgUnitLevels || []).map((lvl) => [lvl.id, Number(lvl.level_no)])
+  );
+  return (orgUnits || []).map((u) => ({
+    ...u,
+    level_no:
+      (u.level_id ? levelById.get(u.level_id) : undefined) ??
+      (Number.isFinite(Number(u.level_no)) ? Number(u.level_no) : 0),
+  }));
+}
+
+/**
+ * Preserves time-of-day (HH:mm[:ss]) if present on legacy `Recorded_At` strings.
+ */
+export function normalizeLegacyTimestamp(rawValue) {
+  if (rawValue === null || rawValue === undefined) return null;
+  const raw = String(rawValue).trim();
+  if (!raw) return null;
+
+  const dateIso = normalizeLegacyDate(raw);
+  if (!dateIso) return null;
+
+  const timeMatch = raw.match(/(?:[T\s])(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (timeMatch) {
+    const hh = Number(timeMatch[1]);
+    const mm = Number(timeMatch[2]);
+    const ss = Number(timeMatch[3] ?? '0');
+    if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59 && ss >= 0 && ss <= 59) {
+      return `${dateIso}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}+07:00`;
+    }
+  }
+
+  return `${dateIso}T00:00:00+07:00`;
+}
+
+/**
  * Resolves legacy `Division` string (which stored Lv3 Department in Ex Project)
  * to Portal SSO `org_units` UUIDs (`office_id`, `department_id`, `division_id`).
  */
@@ -284,6 +324,15 @@ export function transformLegacyVehicleRow(row, context) {
     const n = Number(String(v || '').replace(/,/g, '').trim());
     return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
   };
+  const toModelYear = (v) => {
+    const n = toInt(v);
+    if (n === null) return null;
+    if (n < 1950 || n > 2650) {
+      warnings.push(`Ignored out-of-range Model_Year: "${v}"`);
+      return null;
+    }
+    return n;
+  };
   const toNum = (v) => {
     const n = Number(String(v || '').replace(/,/g, '').trim());
     return Number.isFinite(n) && n >= 0 && String(v || '').trim() !== '' ? n : null;
@@ -301,7 +350,7 @@ export function transformLegacyVehicleRow(row, context) {
       vessel_license_no: isVessel ? String(row.Vessel_License_No || '').trim() || null : null,
       brand: isVessel ? null : String(row.Brand || '').trim() || null,
       model: isVessel ? null : String(row.Model || '').trim() || null,
-      model_year: isVessel ? null : toInt(row.Model_Year),
+      model_year: isVessel ? null : toModelYear(row.Model_Year),
       engine_cc: isVessel ? null : toInt(row.Engine_CC),
       price: isVessel ? null : toNum(row.Price),
       acquisition_date: normalizeLegacyDate(row.Acquisition_Date),
@@ -341,7 +390,7 @@ export function transformLegacyActivityRow(row, vehicleIdByCode) {
     ? rawRecordedBy.split(' / ')[0].trim()
     : rawRecordedBy;
 
-  const recordedIso = normalizeLegacyDate(row.Recorded_At);
+  const recordedAt = normalizeLegacyTimestamp(row.Recorded_At);
 
   return {
     ok: true,
@@ -357,7 +406,7 @@ export function transformLegacyActivityRow(row, vehicleIdByCode) {
       details: String(row.Details || '').trim() || null,
       file_url: String(row.File_URL || '').trim() || null,
       recorded_by_name: recordedByName || 'ผู้ใช้งาน (นำเข้าข้อมูล)',
-      ...(recordedIso ? { recorded_at: `${recordedIso}T00:00:00+07:00` } : {}),
+      ...(recordedAt ? { recorded_at: recordedAt } : {}),
     },
   };
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -10,7 +10,12 @@ import { vehicleService } from '@/services/vehicleService';
 import { portalDirectoryService } from '@/services/portalDirectoryService';
 import { driveBridgeService, validateAttachmentFile } from '@/services/driveBridgeService';
 import { QUERY_KEYS } from '@/lib/queryClient';
-import { ALL_VEHICLE_STATUS_ORDER, VEHICLE_STATUS_MAP, computeVehicleStatus } from '@/lib/vehicleStatus';
+import {
+  ALL_VEHICLE_STATUS_ORDER,
+  TERMINAL_STATUS_CODES,
+  VEHICLE_STATUS_MAP,
+  computeVehicleStatus,
+} from '@/lib/vehicleStatus';
 import { useAuthStore, isVehicleSuperAdmin } from '@/stores/useAuthStore';
 import { useUiStore } from '@/stores/useUiStore';
 import type {
@@ -134,8 +139,16 @@ export function VehicleFormModal({
     },
   });
 
+  const wasOpenRef = useRef(false);
+
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      wasOpenRef.current = false;
+      return;
+    }
+    if (wasOpenRef.current) return;
+    wasOpenRef.current = true;
+
     setFormError(null);
     setVesselFile(null);
     setShowAllInOrg(false);
@@ -145,7 +158,7 @@ export function VehicleFormModal({
       reset({
         vehicle_type_id: editingVehicle.vehicle_type_id,
         license_plate: editingVehicle.license_plate || '',
-        province: editingVehicle.province || 'กรุงเทพมหานคร',
+        province: editingVehicle.province ?? '',
         vessel_name: editingVehicle.vessel_name || '',
         vessel_license_no: editingVehicle.vessel_license_no || '',
         brand: editingVehicle.brand || '',
@@ -165,8 +178,14 @@ export function VehicleFormModal({
       });
     } else {
       setUseCaretaker(false);
-      const defaultOfficeId = personnel?.office_id || '';
-      const defaultDeptId = personnel?.department_id || '';
+      const defaultOfficeId =
+        user?.admin_scope?.scope_level_no === 2
+          ? user.admin_scope.org_unit_id
+          : personnel?.office_id || '';
+      const defaultDeptId =
+        user?.admin_scope?.scope_level_no === 3
+          ? user.admin_scope.org_unit_id
+          : personnel?.department_id || '';
       reset({
         vehicle_type_id: defaultTypeId,
         license_plate: '',
@@ -189,13 +208,20 @@ export function VehicleFormModal({
         remarks: '',
       });
     }
-  }, [open, editingVehicle, defaultTypeId, personnel, reset]);
+  }, [open, editingVehicle, defaultTypeId, personnel, user, reset]);
 
   const watchedTypeId = watch('vehicle_type_id');
   const watchedOfficeId = watch('office_id');
   const watchedDeptId = watch('department_id');
   const watchedStatus = watch('status_code');
   const watchedExpiry = watch('current_expiry_date');
+
+  // If vehicleTypes loads asynchronously after modal opens for a new vehicle, backfill defaultTypeId
+  useEffect(() => {
+    if (open && !editingVehicle && !watchedTypeId && defaultTypeId) {
+      setValue('vehicle_type_id', defaultTypeId);
+    }
+  }, [open, editingVehicle, watchedTypeId, defaultTypeId, setValue]);
 
   const selectedType = useMemo(
     () => vehicleTypes.find((t) => t.id === watchedTypeId) ?? null,
@@ -204,29 +230,79 @@ export function VehicleFormModal({
   const isVessel = Boolean(selectedType?.is_vessel);
 
   // Scoped Org Units hierarchy (Lv2 Office -> Lv3 Department -> Lv4 Division)
+  // Mirrors PostgreSQL `vehicleapp.fn_can_access_vehicle` for Portal ADMIN (Lv2/Lv3) & App FLEET_ADMIN.
+  const scopedDeptId = useMemo(() => {
+    if (isSuper) return null;
+    if (user?.role === 'ADMIN' && user.admin_scope?.scope_level_no === 3) {
+      return user.admin_scope.org_unit_id;
+    }
+    if (user?.role !== 'ADMIN' && personnel?.department_id) {
+      return personnel.department_id;
+    }
+    return null;
+  }, [isSuper, user, personnel]);
+
+  const scopedOfficeId = useMemo(() => {
+    if (isSuper) return null;
+    if (user?.role === 'ADMIN' && user.admin_scope?.scope_level_no === 2) {
+      return user.admin_scope.org_unit_id;
+    }
+    if (scopedDeptId) {
+      const deptNode = orgUnits.find((u) => u.id === scopedDeptId);
+      if (deptNode?.parent_id) return deptNode.parent_id;
+    }
+    if (user?.role !== 'ADMIN' && personnel?.office_id) {
+      return personnel.office_id;
+    }
+    return null;
+  }, [isSuper, user, personnel, scopedDeptId, orgUnits]);
+
+  // Auto-sync parent office_id for Lv3 scoped admin once orgUnits loads
+  useEffect(() => {
+    if (open && !editingVehicle && scopedOfficeId && !watchedOfficeId) {
+      setValue('office_id', scopedOfficeId);
+    }
+  }, [open, editingVehicle, scopedOfficeId, watchedOfficeId, setValue]);
+
   const offices = useMemo(() => {
     const lv2 = orgUnits.filter((u) => u.level_no === 2);
-    if (!isSuper && user?.admin_scope?.scope_level_no === 2) {
-      return lv2.filter((u) => u.id === user.admin_scope?.org_unit_id);
+    if (scopedOfficeId) {
+      return lv2.filter((u) => u.id === scopedOfficeId);
     }
     return lv2;
-  }, [orgUnits, isSuper, user]);
+  }, [orgUnits, scopedOfficeId]);
 
   const departments = useMemo(() => {
     let lv3 = orgUnits.filter((u) => u.level_no === 3);
     if (watchedOfficeId) {
       lv3 = lv3.filter((u) => u.parent_id === watchedOfficeId);
     }
-    if (!isSuper && user?.admin_scope?.scope_level_no === 3) {
-      lv3 = lv3.filter((u) => u.id === user.admin_scope?.org_unit_id);
+    if (scopedDeptId) {
+      lv3 = lv3.filter((u) => u.id === scopedDeptId);
     }
     return lv3;
-  }, [orgUnits, watchedOfficeId, isSuper, user]);
+  }, [orgUnits, watchedOfficeId, scopedDeptId]);
 
   const divisions = useMemo(() => {
     if (!watchedDeptId) return [];
     return orgUnits.filter((u) => u.level_no === 4 && u.parent_id === watchedDeptId);
   }, [orgUnits, watchedDeptId]);
+
+  // Terminal-state guard: only SUPERADMIN / APP_ADMIN (>= 90) may restore DISPOSED/DECOMMISSIONED
+  const allowedStatusOptions = useMemo<VehicleStatusCode[]>(() => {
+    if (isSuper || !editingVehicle) return ALL_VEHICLE_STATUS_ORDER;
+    if (editingVehicle.status_code === 'DISPOSED') {
+      return ['DISPOSED'];
+    }
+    if (editingVehicle.status_code === 'DECOMMISSIONED') {
+      return ['DECOMMISSIONED', 'DISPOSED'];
+    }
+    return ALL_VEHICLE_STATUS_ORDER;
+  }, [isSuper, editingVehicle]);
+
+  const isStatusTerminalLocked = Boolean(
+    !isSuper && editingVehicle && TERMINAL_STATUS_CODES.has(editingVehicle.status_code)
+  );
 
   const effectivePreviewStatus = useMemo<VehicleStatusCode>(() => {
     const isMaint =
@@ -262,6 +338,16 @@ export function VehicleFormModal({
     if (values.status_code === 'DISPOSED' && !values.disposal_date) {
       setFormError('กรุณาระบุวันที่จำหน่ายเมื่อเลือกสถานะ "จำหน่าย"');
       return;
+    }
+
+    if (!isSuper && editingVehicle && TERMINAL_STATUS_CODES.has(editingVehicle.status_code)) {
+      const allowedNext = editingVehicle.status_code === 'DECOMMISSIONED'
+        ? ['DECOMMISSIONED', 'DISPOSED']
+        : ['DISPOSED'];
+      if (!allowedNext.includes(values.status_code)) {
+        setFormError('เฉพาะผู้ดูแลระบบสูงสุด (SUPERADMIN / APP_ADMIN) เท่านั้นที่สามารถคืนสถานะจากยุบสภาพหรือจำหน่ายได้');
+        return;
+      }
     }
 
     if (useCaretaker && !values.caretaker_personnel_id) {
@@ -400,13 +486,23 @@ export function VehicleFormModal({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="bma-label">ประเภทยานพาหนะ *</label>
-            <select {...register('vehicle_type_id')} className="bma-input">
-              {vehicleTypes.map((vt) => (
-                <option key={vt.id} value={vt.id}>
-                  {vt.name_th}
-                </option>
-              ))}
-            </select>
+            <Controller
+              name="vehicle_type_id"
+              control={control}
+              render={({ field }) => (
+                <select
+                  value={field.value || ''}
+                  onChange={(e) => field.onChange(e.target.value)}
+                  className="bma-input"
+                >
+                  {vehicleTypes.map((vt) => (
+                    <option key={vt.id} value={vt.id}>
+                      {vt.name_th}
+                    </option>
+                  ))}
+                </select>
+              )}
+            />
             {errors.vehicle_type_id && (
               <p className="text-[11px] text-rose-600 mt-1">{errors.vehicle_type_id.message}</p>
             )}
@@ -578,55 +674,114 @@ export function VehicleFormModal({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
             <div>
               <label className="bma-label">สำนักงาน (Lv2)</label>
-              <select
-                {...register('office_id')}
-                onChange={(e) => {
-                  setValue('office_id', e.target.value);
-                  setValue('department_id', '');
-                  setValue('division_id', '');
-                  setValue('caretaker_personnel_id', null);
+              <Controller
+                name="office_id"
+                control={control}
+                render={({ field }) => {
+                  const val = field.value || '';
+                  const missingSelected = Boolean(val && !offices.some((o) => o.id === val));
+                  return (
+                    <select
+                      aria-label="สำนักงาน (Lv2)"
+                      value={val}
+                      onChange={(e) => {
+                        field.onChange(e.target.value);
+                        setValue('department_id', '');
+                        setValue('division_id', '');
+                        setValue('caretaker_personnel_id', null);
+                      }}
+                      className="bma-input"
+                    >
+                      <option value="">-- เลือกสำนักงาน --</option>
+                      {missingSelected && (
+                        <option value={val}>
+                          {editingVehicle?.office_id === val
+                            ? editingVehicle.office_name || val
+                            : val}
+                        </option>
+                      )}
+                      {offices.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name_th}
+                        </option>
+                      ))}
+                    </select>
+                  );
                 }}
-                className="bma-input"
-              >
-                <option value="">-- เลือกสำนักงาน --</option>
-                {offices.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.name_th}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
 
             <div>
               <label className="bma-label">ฝ่าย / ส่วน (Lv3)</label>
-              <select
-                {...register('department_id')}
-                onChange={(e) => {
-                  setValue('department_id', e.target.value);
-                  setValue('division_id', '');
-                  setValue('caretaker_personnel_id', null);
+              <Controller
+                name="department_id"
+                control={control}
+                render={({ field }) => {
+                  const val = field.value || '';
+                  const missingSelected = Boolean(val && !departments.some((d) => d.id === val));
+                  return (
+                    <select
+                      aria-label="ฝ่าย / ส่วน (Lv3)"
+                      value={val}
+                      onChange={(e) => {
+                        field.onChange(e.target.value);
+                        setValue('division_id', '');
+                        setValue('caretaker_personnel_id', null);
+                      }}
+                      className="bma-input"
+                    >
+                      <option value="">-- เลือกฝ่าย / ส่วน --</option>
+                      {missingSelected && (
+                        <option value={val}>
+                          {editingVehicle?.department_id === val
+                            ? editingVehicle.department_name || val
+                            : val}
+                        </option>
+                      )}
+                      {departments.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name_th}
+                        </option>
+                      ))}
+                    </select>
+                  );
                 }}
-                className="bma-input"
-              >
-                <option value="">-- เลือกฝ่าย / ส่วน --</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name_th}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
 
             <div>
               <label className="bma-label">กลุ่มงาน (Lv4 - ถ้ามี)</label>
-              <select {...register('division_id')} className="bma-input" disabled={divisions.length === 0}>
-                <option value="">-- ไม่ระบุ --</option>
-                {divisions.map((div) => (
-                  <option key={div.id} value={div.id}>
-                    {div.name_th}
-                  </option>
-                ))}
-              </select>
+              <Controller
+                name="division_id"
+                control={control}
+                render={({ field }) => {
+                  const val = field.value || '';
+                  const missingSelected = Boolean(val && !divisions.some((div) => div.id === val));
+                  return (
+                    <select
+                      aria-label="กลุ่มงาน (Lv4 - ถ้ามี)"
+                      value={val}
+                      onChange={(e) => field.onChange(e.target.value)}
+                      className="bma-input"
+                      disabled={divisions.length === 0 && !missingSelected}
+                    >
+                      <option value="">-- ไม่ระบุ --</option>
+                      {missingSelected && (
+                        <option value={val}>
+                          {editingVehicle?.division_id === val
+                            ? editingVehicle.division_name || val
+                            : val}
+                        </option>
+                      )}
+                      {divisions.map((div) => (
+                        <option key={div.id} value={div.id}>
+                          {div.name_th}
+                        </option>
+                      ))}
+                    </select>
+                  );
+                }}
+              />
             </div>
           </div>
 
@@ -677,13 +832,31 @@ export function VehicleFormModal({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="bma-label">สถานะยานพาหนะ</label>
-            <select {...register('status_code')} className="bma-input">
-              {ALL_VEHICLE_STATUS_ORDER.map((code) => (
-                <option key={code} value={code}>
-                  {VEHICLE_STATUS_MAP[code].labelTh}
-                </option>
-              ))}
-            </select>
+            <Controller
+              name="status_code"
+              control={control}
+              render={({ field }) => (
+                <select
+                  aria-label="สถานะยานพาหนะ"
+                  value={field.value}
+                  onChange={(e) => field.onChange(e.target.value as VehicleStatusCode)}
+                  disabled={allowedStatusOptions.length <= 1}
+                  className="bma-input"
+                >
+                  {allowedStatusOptions.map((code) => (
+                    <option key={code} value={code}>
+                      {VEHICLE_STATUS_MAP[code].labelTh}
+                    </option>
+                  ))}
+                </select>
+              )}
+            />
+            {isStatusTerminalLocked && (
+              <p className="text-[11px] text-rose-600 dark:text-rose-400 mt-1">
+                <i className="fa-solid fa-lock mr-1" />
+                สถานะสิ้นสุด — การคืนสถานะกลับเป็นปกติสงวนสิทธิ์เฉพาะ SUPERADMIN / APP_ADMIN
+              </p>
+            )}
             {effectivePreviewStatus !== watchedStatus && (
               <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
                 <i className="fa-solid fa-wand-magic-sparkles mr-1" />

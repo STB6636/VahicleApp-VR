@@ -13,6 +13,11 @@ export interface LegacyStatusMapping {
 
 export function parseCsvRecords(csvText: string): Array<Record<string, string>>;
 export function normalizeLegacyDate(rawValue: string | number | null | undefined): string | null;
+export function normalizeLegacyTimestamp(rawValue: string | number | null | undefined): string | null;
+export function normalizeOrgUnitsWithLevels(
+  orgUnits: Array<{ id: string; parent_id: string | null; level_id?: string | null; level_no?: number; name_th: string }>,
+  orgUnitLevels: Array<{ id: string; level_no: number }>
+): Array<{ id: string; parent_id: string | null; level_no: number; name_th: string }>;
 export function mapLegacyStatus(rawStatus: string | null | undefined): LegacyStatusMapping;
 export function mapLegacyVehicleTypeCode(rawType: string | null | undefined): string;
 export function mapLegacyActivityType(rawType: string | null | undefined): string;

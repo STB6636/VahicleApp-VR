@@ -9,6 +9,7 @@ import { VehicleFormModal } from '@/components/vehicles/VehicleFormModal';
 import { VehicleDetailModal } from '@/components/vehicles/VehicleDetailModal';
 import { ALL_VEHICLE_STATUS_ORDER, VEHICLE_STATUS_MAP } from '@/lib/vehicleStatus';
 import { formatThaiDate } from '@/lib/thaiDate';
+import { escapeHtml } from '@/lib/htmlUtils';
 import { useAuthStore, isVehicleAdminOrAbove } from '@/stores/useAuthStore';
 import { useUiStore } from '@/stores/useUiStore';
 import type { VehicleEnrichedRow, VehicleStatusCode } from '@/types/vehicle.types';
@@ -147,7 +148,7 @@ export function VehiclesPage() {
     const confirm = await Swal.fire({
       icon: 'warning',
       title: 'ยืนยันการลบข้อมูลยานพาหนะ?',
-      html: `<p style="font-size:14px;">ต้องการลบ <strong>${v.vehicle_label}</strong> (${v.vehicle_code}) ออกจากทะเบียนหรือไม่?<br/><span style="color:#be123c;font-size:12px;">ประวัติกิจกรรมทั้งหมดของยานพาหนะรายการนี้จะถูกลบไปด้วย</span></p>`,
+      html: `<p style="font-size:14px;">ต้องการลบ <strong>${escapeHtml(v.vehicle_label)}</strong> (${escapeHtml(v.vehicle_code)}) ออกจากทะเบียนหรือไม่?<br/><span style="color:#be123c;font-size:12px;">ประวัติกิจกรรมทั้งหมดของยานพาหนะรายการนี้จะถูกลบไปด้วย</span></p>`,
       showCancelButton: true,
       confirmButtonText: 'ยืนยันลบข้อมูล',
       cancelButtonText: 'ยกเลิก',
@@ -164,7 +165,7 @@ export function VehiclesPage() {
       showToast(`ลบยานพาหนะ ${v.vehicle_label} เรียบร้อยแล้ว`, 'success');
       await Promise.all([
         qc.invalidateQueries({ queryKey: QUERY_KEYS.vehicles }),
-        qc.invalidateQueries({ queryKey: QUERY_KEYS.activities() }),
+        qc.invalidateQueries({ queryKey: QUERY_KEYS.activitiesAll }),
         qc.invalidateQueries({ queryKey: QUERY_KEYS.schemaHealth }),
       ]);
     } catch (err) {

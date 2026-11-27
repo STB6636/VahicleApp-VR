@@ -19,10 +19,13 @@ import path from 'node:path';
 import { createClient } from '@supabase/supabase-js';
 import {
   extractMaxSequenceNumber,
+  normalizeOrgUnitsWithLevels,
   parseCsvRecords,
   transformLegacyActivityRow,
   transformLegacyVehicleRow,
 } from './lib/legacyParser.mjs';
+
+const UPSERT_CHUNK_SIZE = 200;
 
 function parseArgs(argv) {
   const args = { dryRun: true, vehicles: '', activities: '', personnel: '' };
@@ -45,6 +48,25 @@ function readDataFile(filePath) {
     return Array.isArray(parsed) ? parsed : [];
   }
   return parseCsvRecords(raw);
+}
+
+function dedupeByKey(records, keyField) {
+  const map = new Map();
+  let duplicates = 0;
+  for (const rec of records) {
+    const k = rec[keyField];
+    if (map.has(k)) duplicates += 1;
+    map.set(k, rec);
+  }
+  return { records: Array.from(map.values()), duplicates };
+}
+
+function chunkArray(arr, size) {
+  const chunks = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
 }
 
 async function main() {
@@ -73,17 +95,25 @@ async function main() {
 
   console.log(`[Migrate] Mode: ${args.dryRun ? 'DRY-RUN (no writes)' : 'EXECUTE (writing to Supabase vehicleapp)'}`);
 
-  const [{ data: vehicleTypes, error: vtErr }, { data: orgUnits, error: orgErr }, { data: personnelDir, error: pErr }] =
-    await Promise.all([
-      adminVehicle.from('vehicle_types').select('id, code, name_th'),
-      adminPublic.from('org_units').select('id, parent_id, level_no, name_th').eq('is_active', true),
-      adminPublic.from('v_personnel_directory').select('id, full_name, office_id, department_id'),
-    ]);
+  // `public.org_units` stores `level_id` referencing `public.org_unit_levels(id)` (no denormalized `level_no` column).
+  const [
+    { data: vehicleTypes, error: vtErr },
+    { data: orgUnitLevels, error: lvlErr },
+    { data: rawOrgUnits, error: orgErr },
+    { data: personnelDir, error: pErr },
+  ] = await Promise.all([
+    adminVehicle.from('vehicle_types').select('id, code, name_th'),
+    adminPublic.from('org_unit_levels').select('id, level_no'),
+    adminPublic.from('org_units').select('id, parent_id, level_id, name_th').eq('is_active', true),
+    adminPublic.from('v_personnel_directory').select('id, full_name, office_id, department_id'),
+  ]);
 
   if (vtErr) throw vtErr;
+  if (lvlErr) throw lvlErr;
   if (orgErr) throw orgErr;
   if (pErr) throw pErr;
 
+  const orgUnits = normalizeOrgUnitsWithLevels(rawOrgUnits || [], orgUnitLevels || []);
   const vehicleTypesByCode = new Map((vehicleTypes || []).map((t) => [t.code, t]));
   const legacyPersonnelById = new Map();
   if (args.personnel) {
@@ -95,28 +125,36 @@ async function main() {
   }
 
   const rawVehicles = readDataFile(args.vehicles);
-  const validVehicles = [];
+  const parsedVehicles = [];
   const vehicleErrors = [];
   const vehicleWarnings = [];
 
   for (const row of rawVehicles) {
     const res = transformLegacyVehicleRow(row, {
       vehicleTypesByCode,
-      orgUnits: orgUnits || [],
+      orgUnits,
       personnelDirectory: personnelDir || [],
       legacyPersonnelById,
     });
     if (!res.ok) {
       vehicleErrors.push(res.error);
     } else {
-      validVehicles.push(res.record);
+      parsedVehicles.push(res.record);
       for (const w of res.warnings) {
         vehicleWarnings.push(`${res.record.vehicle_code}: ${w}`);
       }
     }
   }
 
-  console.log(`[Migrate] Vehicles parsed: ${validVehicles.length} valid, ${vehicleErrors.length} errors, ${vehicleWarnings.length} warnings.`);
+  const { records: validVehicles, duplicates: duplicateVehicles } = dedupeByKey(
+    parsedVehicles,
+    'vehicle_code'
+  );
+  if (duplicateVehicles > 0) {
+    console.warn(`[Migrate] Deduplicated ${duplicateVehicles} duplicate vehicle_code rows (last row wins).`);
+  }
+
+  console.log(`[Migrate] Vehicles parsed: ${validVehicles.length} unique valid, ${vehicleErrors.length} errors, ${vehicleWarnings.length} warnings.`);
   if (vehicleWarnings.length > 0) {
     console.log('[Migrate] Sample warnings (first 10):', vehicleWarnings.slice(0, 10));
   }
@@ -126,12 +164,14 @@ async function main() {
 
   const vehicleIdByCode = new Map();
   if (!args.dryRun && validVehicles.length > 0) {
-    const { data: upserted, error: upErr } = await adminVehicle
-      .from('vehicles')
-      .upsert(validVehicles, { onConflict: 'vehicle_code' })
-      .select('id, vehicle_code');
-    if (upErr) throw upErr;
-    for (const v of upserted || []) vehicleIdByCode.set(v.vehicle_code, v.id);
+    for (const batch of chunkArray(validVehicles, UPSERT_CHUNK_SIZE)) {
+      const { data: upserted, error: upErr } = await adminVehicle
+        .from('vehicles')
+        .upsert(batch, { onConflict: 'vehicle_code' })
+        .select('id, vehicle_code');
+      if (upErr) throw upErr;
+      for (const v of upserted || []) vehicleIdByCode.set(v.vehicle_code, v.id);
+    }
     console.log(`[Migrate] Upserted ${vehicleIdByCode.size} vehicles into vehicleapp.vehicles.`);
   } else {
     for (const v of validVehicles) vehicleIdByCode.set(v.vehicle_code, `dry-run-${v.vehicle_code}`);
@@ -141,18 +181,26 @@ async function main() {
   const activityErrors = [];
   if (args.activities) {
     const rawActivities = readDataFile(args.activities);
+    const parsedActivities = [];
     for (const row of rawActivities) {
       const res = transformLegacyActivityRow(row, vehicleIdByCode);
       if (!res.ok) activityErrors.push(res.error);
-      else validActivities.push(res.record);
+      else parsedActivities.push(res.record);
     }
-    console.log(`[Migrate] Activities parsed: ${validActivities.length} valid, ${activityErrors.length} errors.`);
+    const dedupedAct = dedupeByKey(parsedActivities, 'activity_code');
+    validActivities = dedupedAct.records;
+    if (dedupedAct.duplicates > 0) {
+      console.warn(`[Migrate] Deduplicated ${dedupedAct.duplicates} duplicate activity_code rows (last row wins).`);
+    }
+    console.log(`[Migrate] Activities parsed: ${validActivities.length} unique valid, ${activityErrors.length} errors.`);
 
     if (!args.dryRun && validActivities.length > 0) {
-      const { error: actErr } = await adminVehicle
-        .from('vehicle_activities')
-        .upsert(validActivities, { onConflict: 'activity_code' });
-      if (actErr) throw actErr;
+      for (const batch of chunkArray(validActivities, UPSERT_CHUNK_SIZE)) {
+        const { error: actErr } = await adminVehicle
+          .from('vehicle_activities')
+          .upsert(batch, { onConflict: 'activity_code' });
+        if (actErr) throw actErr;
+      }
       console.log(`[Migrate] Upserted ${validActivities.length} activities into vehicleapp.vehicle_activities.`);
     }
   }
